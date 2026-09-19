@@ -135,6 +135,7 @@ def identify_attachments_by_content(
         "roles": dict(assignment.roles),
         "role_source": dict(assignment.role_source),
         "swapped": assignment.swapped,
+        "superseded": list(assignment.superseded),
     }
     if assignment.problem:
         raise ReviewRequired(**assignment.problem, document_analysis=analysis)

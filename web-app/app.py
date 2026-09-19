@@ -33,6 +33,7 @@ from src.service import (
     write_artifacts,
 )
 from src.dashboard import normalized_inbox_records, useDashboardStats, useInboxFilters
+from src.versions import version_summary
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -49,6 +50,7 @@ def find_default_bundle() -> Path:
 
 
 DEFAULT_BUNDLE = find_default_bundle()
+DEMO_BUNDLE = PROJECT_ROOT / "demo" / "versions-bundle"
 
 CATEGORY_LABELS = {
     "BL_COMPARISON": "Document Comparison Request",
@@ -534,9 +536,12 @@ def render_document_types(detail: dict[str, Any]) -> None:
     detections = analysis.get("detections") or {}
     if not detections:
         return
+    superseded = set(analysis.get("superseded") or [])
     rows = []
     for path, det in detections.items():
-        if det.get("reason") == "no_text":
+        if path in superseded:
+            note = "Older revision: a newer " + str(det.get("type", "")) + " in this email was used instead"
+        elif det.get("reason") == "no_text":
             note = "No readable text (corrupt file or scanned image)"
         elif det.get("reason") == "conflicting_titles":
             note = "Conflicting titles: " + ", ".join(det.get("conflicts") or [])
@@ -559,6 +564,110 @@ def render_document_types(detail: dict[str, Any]) -> None:
     st.dataframe(rows, hide_index=True, width="stretch")
     if analysis.get("swapped"):
         st.info("The SI and BL were in the wrong places. Roles were assigned from the document titles, not the filenames.")
+
+
+def version_badge(detail: dict[str, Any]) -> str:
+    """One-line repeat/version status for the inbox list."""
+    info = detail.get("version_info") or {}
+    if info.get("duplicate_of"):
+        return f"Repeat of {info['duplicate_of']}"
+    if info.get("duplicates"):
+        return f"Received {len(info['duplicates']) + 1} times"
+    if info.get("version_count", 0) > 1:
+        if info.get("is_latest"):
+            return f"Latest of {info['version_count']} versions"
+        return f"Version {info['version']} of {info['version_count']} · superseded by {info['superseded_by']}"
+    return ""
+
+
+def render_version_info(detail: dict[str, Any]) -> None:
+    """Explain repeats, the shipment's version chain and what changed between versions."""
+    info = detail.get("version_info") or {}
+    if not info:
+        return
+    section_label("Repeats and versions")
+    if info.get("duplicate_of"):
+        st.warning(f"Repeated email: identical to {info['duplicate_of']} (same subject, message and attachments).")
+    elif info.get("duplicates"):
+        st.info(f"This email was received {len(info['duplicates']) + 1} times. Repeats: {', '.join(info['duplicates'])}.")
+    if not info.get("version"):
+        if not info.get("duplicate_of"):
+            st.caption("No shipment identifier could be read from this email's documents, so it is not tracked for versions.")
+        return
+    source = {"booking_no": "Booking No.", "oc_no": "OC No.", "si_fingerprint": "the SI's seven fields"}.get(
+        info.get("key_source"), str(info.get("key_source"))
+    )
+    st.caption(f"Shipment identified by {source}: {str(info['shipment_key']).split(':', 1)[1]}")
+    count = info["version_count"]
+    if count == 1:
+        st.caption("Only one version has been received for this shipment.")
+        return
+    if info.get("is_latest"):
+        st.success(f"Version {info['version']} of {count}: this is the latest version.")
+    else:
+        st.warning(
+            f"Version {info['version']} of {count}: superseded by {info['superseded_by']}. "
+            f"The latest version is {info['latest_email_id']}."
+        )
+    st.caption("Chain (oldest to newest): " + " → ".join(info["chain"]))
+    st.caption(
+        {
+            "arrival_date": "Ordered by email date.",
+            "arrival_order": "Ordered by arrival (these emails carry no date).",
+            "revision_marker": "Ordered by the revision number printed in the document.",
+        }.get(info.get("order_basis"), "")
+    )
+    if info.get("order_conflict"):
+        st.warning("Printed revision numbers disagree with arrival order; the revision numbers were used.")
+    if info.get("supersedes"):
+        changes = info.get("changes_from_previous")
+        if changes is None:
+            st.caption(f"Field changes since {info['supersedes']} could not be compared (a document was unreadable or incomplete).")
+        elif not changes:
+            st.caption(f"No field changes since {info['supersedes']}: it was resent unchanged.")
+        else:
+            st.markdown(f"**Changes since {info['supersedes']}**")
+            st.dataframe(
+                [{"Document": c["document"], "Field": c["label"], "Previous": c["previous"], "Current": c["current"]}
+                 for c in changes],
+                hide_index=True,
+                width="stretch",
+            )
+
+
+def render_version_summary(artifacts: ProcessingArtifacts) -> None:
+    stats = version_summary(artifacts.internal_results)
+    section_label("Repeats and versions")
+    cols = st.columns(4)
+    items = (
+        ("Repeated emails", stats["repeated_emails"], f"Exact repeats (same subject, message and attachments), in {stats['repeat_groups']} groups."),
+        ("Shipments tracked", stats["shipments_tracked"], "Document-check emails linked to a shipment by Booking No. or OC No."),
+        ("With revisions", stats["shipments_with_revisions"], "Shipments that have more than one version."),
+        ("Superseded", stats["superseded_documents"], "Older versions replaced by a newer one."),
+    )
+    for col, (label, value, help_text) in zip(cols, items):
+        col.metric(label, f"{value:,}", help=help_text)
+    repeats = [
+        (eid, detail["version_info"]["duplicate_of"])
+        for eid, detail in artifacts.internal_results.items()
+        if (detail.get("version_info") or {}).get("duplicate_of")
+    ]
+    if repeats:
+        subject_of = {str(e.get("email_id")): str(e.get("subject", "")) for e in artifacts.emails}
+        with st.expander(f"View the {len(repeats)} repeated emails"):
+            st.dataframe(
+                [
+                    {
+                        "Email": eid,
+                        "Repeat of": original,
+                        "Category": CATEGORY_LABELS.get(artifacts.submission[eid]["category"], artifacts.submission[eid]["category"]),
+                        "Subject": subject_of.get(eid, ""),
+                    }
+                    for eid, original in repeats
+                ],
+                hide_index=True,
+                width="stretch",
+            )
 
 
 def render_single_result(artifacts: ProcessingArtifacts) -> None:
@@ -881,6 +990,9 @@ def render_inbox_workspace(artifacts: ProcessingArtifacts) -> None:
                 """,
                 unsafe_allow_html=True,
             )
+            badge = version_badge(detail)
+            if badge:
+                st.caption(badge)
 
             st.button(
                 "Collapse" if expanded else "View details",
@@ -906,6 +1018,7 @@ def render_inbox_workspace(artifacts: ProcessingArtifacts) -> None:
                         width="stretch",
                     )
                     render_confidence(detail)
+                    render_version_info(detail)
 
                 with tab2:
                     render_document_types(detail)
@@ -1239,6 +1352,11 @@ elif page == "Analyze inbox":
     if "dataset_artifacts" not in st.session_state:
         st.markdown('<div class="journey"><div class="journey-step"><div class="journey-dot">1</div><div class="journey-title">Sort the inbox</div><div class="journey-copy">CargoCheck identifies which emails actually need document checking.</div></div><div class="journey-step"><div class="journey-dot">2</div><div class="journey-title">Check SI against BL</div><div class="journey-copy">The seven shipment fields are compared only for the relevant requests.</div></div><div class="journey-step"><div class="journey-dot">3</div><div class="journey-title">See your next tasks</div><div class="journey-copy">Corrections and uncertain cases appear first in one simple queue.</div></div></div>', unsafe_allow_html=True)
         st.write("")
+    data_sources = {"Participant dataset": str(DEFAULT_BUNDLE)}
+    if (DEMO_BUNDLE / "inbox").is_dir():
+        data_sources["Version-tracking demo (10 emails)"] = str(DEMO_BUNDLE)
+    if len(data_sources) > 1:
+        bundle_path = data_sources[st.selectbox("Data source", list(data_sources), key="data_source")]
     if st.button("Analyze inbox and build work queue", type="primary", width="stretch", key="run_dataset"):
         try:
             artifacts = run_dataset_with_progress(bundle_path)
@@ -1252,6 +1370,7 @@ elif page == "Analyze inbox":
             st.error(str(exc))
     if "dataset_artifacts" in st.session_state:
         render_summary(st.session_state.dataset_artifacts)
+        render_version_summary(st.session_state.dataset_artifacts)
         render_inbox_workspace(st.session_state.dataset_artifacts)
 
 elif page == "Human review":
