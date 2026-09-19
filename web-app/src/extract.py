@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Callable
+
+from .doctype import assign_roles
 
 
 FIELDS = (
@@ -63,6 +65,7 @@ class ReviewRequired(Exception):
     review_reason: str
     internal_reason: str
     detail: str
+    document_analysis: dict[str, Any] | None = None  # what each attachment was detected as
 
     def __str__(self) -> str:
         return self.detail
@@ -95,6 +98,47 @@ def identify_attachments(paths: list[str]) -> dict[str, str]:
             f"Missing required attachment role(s): {', '.join(missing)}",
         )
     return {"SI": roles["SI"][0], "BL": roles["BL"][0]}
+
+
+# Suffix -> function turning raw bytes into text, used for document type detection.
+# When PDF / DOCX / XLSX (or OCR) parsing is added, register a reader here and
+# content-based type detection works for that format automatically.
+TEXT_READERS: dict[str, Callable[[bytes], str]] = {
+    ".txt": lambda raw: raw.decode("utf-8", errors="replace"),
+}
+
+
+def _read_text_for_detection(inbox: Any, path: str) -> str | None:
+    reader = TEXT_READERS.get(Path(path).suffix.casefold())
+    if reader is None:
+        return None
+    try:
+        raw = inbox.read_bytes(path)
+        return reader(raw) if raw else None
+    except Exception:  # unreadable here is reported properly by the extraction step
+        return None
+
+
+def identify_attachments_by_content(
+    inbox: Any, paths: list[str]
+) -> tuple[dict[str, str], dict[str, Any]]:
+    """Decide which attachment is the SI and which is the BL by reading their titles.
+
+    Unlike ``identify_attachments`` this does not trust filenames or upload
+    slots. Returns ``(roles, analysis)``; raises ``ReviewRequired`` when the
+    pair cannot be established (wrong document type, missing, conflicting).
+    """
+    documents = [(path, _read_text_for_detection(inbox, path)) for path in paths]
+    assignment = assign_roles(documents)
+    analysis = {
+        "detections": assignment.detections,
+        "roles": dict(assignment.roles),
+        "role_source": dict(assignment.role_source),
+        "swapped": assignment.swapped,
+    }
+    if assignment.problem:
+        raise ReviewRequired(**assignment.problem, document_analysis=analysis)
+    return dict(assignment.roles), analysis
 
 
 def _looks_missing(value: str) -> bool:

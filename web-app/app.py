@@ -528,6 +528,39 @@ def render_evidence(detail: dict[str, Any]) -> None:
                 )
 
 
+def render_document_types(detail: dict[str, Any]) -> None:
+    """Show what each attachment was detected as, judged by content and not by filename."""
+    analysis = detail.get("document_analysis") or {}
+    detections = analysis.get("detections") or {}
+    if not detections:
+        return
+    rows = []
+    for path, det in detections.items():
+        if det.get("reason") == "no_text":
+            note = "No readable text (corrupt file or scanned image)"
+        elif det.get("reason") == "conflicting_titles":
+            note = "Conflicting titles: " + ", ".join(det.get("conflicts") or [])
+        elif det.get("reason") == "no_title_found":
+            note = "No document title found"
+        elif det.get("type") not in ("SI", "BL"):
+            note = "Not a Shipping Instruction or Bill of Lading"
+        elif det.get("filename_hint") not in (None, det["type"]):
+            note = f"Filename suggests {det['filename_hint']}, content says {det['type']}"
+        else:
+            note = "As expected"
+        rows.append(
+            {
+                "File": Path(path).name,
+                "Detected as": det.get("label") or "Unknown",
+                "Confidence": f"{det.get('confidence', 0):.0%}" if det.get("confidence") else "—",
+                "Note": note,
+            }
+        )
+    st.dataframe(rows, hide_index=True, width="stretch")
+    if analysis.get("swapped"):
+        st.info("The SI and BL were in the wrong places. Roles were assigned from the document titles, not the filenames.")
+
+
 def render_single_result(artifacts: ProcessingArtifacts) -> None:
     email=artifacts.emails[0]
     email_id=email["email_id"]
@@ -568,6 +601,10 @@ def render_single_result(artifacts: ProcessingArtifacts) -> None:
                 """,
                 unsafe_allow_html=True
             )
+
+    if (detail.get("document_analysis") or {}).get("detections"):
+        section_label("Documents")
+        render_document_types(detail)
 
     if status=="MISMATCH":
         section_label("Mismatch details")
@@ -871,6 +908,7 @@ def render_inbox_workspace(artifacts: ProcessingArtifacts) -> None:
                     render_confidence(detail)
 
                 with tab2:
+                    render_document_types(detail)
                     st.write(f"**From:** {email.get('from', 'Unknown')}")
                     st.write(email.get("body", "No message body"))
                     render_evidence(detail)

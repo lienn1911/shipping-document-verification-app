@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 from .classify import BL_COMPARISON, classify_email
 from .compare import compare_documents
-from .extract import ReviewRequired, extract_attachment_with_evidence, identify_attachments
+from .extract import ReviewRequired, extract_attachment_with_evidence, identify_attachments_by_content
 
 
 CONFIDENCE_REVIEW_THRESHOLD = 0.75
@@ -52,8 +52,11 @@ def _process_comparison(
     paths: dict[str, str] | None = None
     extracted: dict[str, dict[str, str]] = {}
     evidence: dict[str, dict[str, dict[str, Any]]] = {}
+    document_analysis: dict[str, Any] = {}
     try:
-        paths = identify_attachments(list(email.get("attachments", [])))
+        paths, document_analysis = identify_attachments_by_content(
+            inbox, list(email.get("attachments", []))
+        )
         extracted["si"], evidence["si"] = extract_attachment_with_evidence(inbox, paths["SI"], "SI")
         extracted["bl"], evidence["bl"] = extract_attachment_with_evidence(inbox, paths["BL"], "BL")
         lowest_confidence = min(
@@ -69,6 +72,7 @@ def _process_comparison(
             stage_callback(email["email_id"], "Comparing seven shipment fields")
         comparison = compare_documents(extracted["si"], extracted["bl"])
     except ReviewRequired as exc:
+        document_analysis = exc.document_analysis or document_analysis
         submission = {
             "status": "NEEDS_REVIEW",
             "review_reason": exc.review_reason,
@@ -82,6 +86,7 @@ def _process_comparison(
             "internal_reason": exc.internal_reason,
             "detail": exc.detail,
             "attachments": paths or list(email.get("attachments", [])),
+            "document_analysis": document_analysis,
             "extracted": extracted,
             "evidence": evidence,
             "field_confidence": {},
@@ -135,6 +140,7 @@ def _process_comparison(
         "review_reason": None,
         "internal_reason": None,
         "attachments": paths,
+        "document_analysis": document_analysis,
         "extracted": extracted,
         "evidence": evidence,
         "field_confidence": {
