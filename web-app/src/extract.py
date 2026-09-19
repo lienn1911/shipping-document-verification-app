@@ -8,6 +8,7 @@ import re
 from typing import Any, Callable
 
 from .doctype import assign_roles
+from .document_readers import read_document, document_text
 
 
 FIELDS = (
@@ -39,6 +40,8 @@ LABEL_ALIASES = {
     },
     "gross_weight_kg": {
         "gross weight (kg)",
+        "gross weight(kgs)",
+        "gross weight (kgs)",
         "gross wt (kgs)",
         "gross weight毛重(kgs)",
         "gross weight",
@@ -50,6 +53,9 @@ MISSING_MARKERS = {"", "n/a", "na", "tba", "tbd", "unknown", "-", "--"}
 
 
 def _normalize_label(label: str) -> str:
+    label = label.replace("■", "")
+    label = re.sub(r"\([^)]*[\u4e00-\u9fff][^)]*\)", "", label)
+    label = re.sub(r"^total\s+(?=gross)", "", label, flags=re.I)
     return re.sub(r"\s+", " ", label).strip().casefold()
 
 
@@ -105,6 +111,8 @@ def identify_attachments(paths: list[str]) -> dict[str, str]:
 # content-based type detection works for that format automatically.
 TEXT_READERS: dict[str, Callable[[bytes], str]] = {
     ".txt": lambda raw: raw.decode("utf-8", errors="replace"),
+    ".pdf": lambda raw: document_text(raw, "attachment.pdf"),
+    ".docx": lambda raw: document_text(raw, "attachment.docx"),
 }
 
 
@@ -148,6 +156,11 @@ def _looks_missing(value: str) -> bool:
 
 
 def _validate_document_type(text: str, role: str, path: str) -> None:
+    if Path(path).suffix.lower() in {".pdf", ".docx"}:
+        from .doctype import detect_document_type
+        detected = detect_document_type(text, path)
+        if detected.type == role and detected.trusted:
+            return
     first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
     expected = "SHIPPING INSTRUCTION" if role == "SI" else "BILL OF LADING"
     if expected not in first_line.upper():
@@ -224,6 +237,8 @@ def parse_fields(text: str, role: str, path: str) -> dict[str, str]:
 
 def extract_attachment(inbox: Any, path: str, role: str) -> dict[str, str]:
     """Read and parse one supported plain-text attachment."""
+    if Path(path).suffix.casefold() in {".pdf", ".docx"}:
+        return extract_rich_attachment(inbox, path, role)[0]
     if Path(path).suffix.casefold() != ".txt":
         raise ReviewRequired(
             "unreadable",
@@ -255,6 +270,8 @@ def extract_attachment_with_evidence(
     inbox: Any, path: str, role: str
 ) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
     """Read one attachment and return extracted values with source locations."""
+    if Path(path).suffix.casefold() in {".pdf", ".docx"}:
+        return extract_rich_attachment(inbox, path, role)
     if Path(path).suffix.casefold() != ".txt":
         raise ReviewRequired(
             "unreadable",
@@ -276,3 +293,50 @@ def extract_attachment_with_evidence(
             "unreadable", "attachment_decode_failed", f"Could not decode {path} as UTF-8"
         ) from exc
     return parse_fields_with_evidence(text, role, path)
+
+
+def extract_rich_attachment(inbox: Any, path: str, role: str):
+    try:
+        raw = inbox.read_bytes(path)
+        if len(raw) > 20 * 1024 * 1024:
+            raise ValueError("Attachment exceeds the 20 MB reading limit")
+        rows = read_document(raw, path)
+    except Exception as exc:
+        raise ReviewRequired("unreadable", "document_read_failed", f"{path}: {exc}") from exc
+    text = "\n".join(row[0] for row in rows)
+    _validate_document_type(text, role, path)
+    canonical = ["SHIPPING INSTRUCTION" if role == "SI" else "BILL OF LADING"]
+    sources = {}
+    for index, (line, page, number) in enumerate(rows):
+        label, sep, value = line.partition(":")
+        field = ALIAS_TO_FIELD.get(_normalize_label(label))
+        if not field:
+            continue
+        last = number
+        if not sep:
+            values = []
+            for following, next_page, next_number in rows[index + 1:]:
+                if next_page != page or ALIAS_TO_FIELD.get(_normalize_label(following.split(":", 1)[0])):
+                    break
+                if re.match(r"^(ocean vessel|export carrier|vessel|container no|description|hs code|booking|freight)", following.strip(), re.I):
+                    break
+                if following.strip():
+                    values.append(following.strip())
+                    last = next_number
+                if field not in PARTY_FIELDS:
+                    break
+            value = " ".join(values)
+        # Column headings are not totals; do not infer weight from container rows.
+        if field == "gross_weight_kg" and not sep:
+            continue
+        if field == "gross_weight_kg" and re.search(r"kgs?", label, re.I) and re.fullmatch(r"[\d, .]+", value.strip()):
+            value = value.strip() + " KG"
+        canonical.append(f"{next(iter(sorted(LABEL_ALIASES[field])))}: {value.strip()}")
+        sources[field] = {"page": page, "line_start": number, "line_end": last,
+                          "excerpt": line + ("\n" + value if not sep else ""),
+                          "location_kind": "PDF text line" if page else "Word paragraph/table row"}
+    fields, evidence = parse_fields_with_evidence("\n".join(canonical), role, path)
+    for field, source in sources.items():
+        evidence[field].update(source)
+        evidence[field]["confidence"] = 0.9
+    return fields, evidence
