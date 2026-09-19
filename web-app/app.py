@@ -13,11 +13,17 @@ import streamlit as st
 
 # Firebase Cloud Infrastructure
 try:
-    from firebase_config import db
+    from firebase_config import db, integration_status as firebase_status
 except Exception:
     db = None
 
+    def firebase_status() -> dict[str, Any]:
+        return {"configured": False, "connected": False, "error": "Firebase import failed"}
+
 from src.pipeline import validate_submission
+from src.ai_results import normalize_ai_result
+from src.reply_draft import build_reply
+from src.service import open_local_inbox
 from src.extract import FIELDS
 from src.reporting import (
     PdfExportUnavailable,
@@ -74,358 +80,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.markdown(
-    """
-    <style>
-      .block-container {max-width: 1440px; padding-top: 0; padding-bottom: 4rem;}
-      .stApp {background:#F6F2E9;}
-      [data-testid="stSidebar"] {display:block;background:#F7F3EA;border-right:1px solid #DED3C1;}
-      [data-testid="stSidebar"] > div:first-child {padding-top:1.2rem;}
-      [data-testid="stSidebar"] div[role="radiogroup"] {gap:.45rem;}
-      [data-testid="stSidebar"] label[data-baseweb="radio"] {background:#EEEAE3;border-radius:11px;padding:.78rem .85rem;margin:0;border:1px solid transparent;}
-      [data-testid="stSidebar"] label[data-baseweb="radio"]:has(input:checked) {background:linear-gradient(90deg,#F9F7F2,#EDE2CD);border-color:#D7C294;box-shadow:inset 3px 0 0 #B58A39;}
-      [data-testid="stSidebar"] label[data-baseweb="radio"] p {font-weight:760;color:#343842;}
-      [data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] {display:block;}
-      [data-testid="stSidebar"] .stButton {margin:.3rem 0;}
-      [data-testid="stSidebar"] .stButton > button {width:100%;min-height:3.1rem;justify-content:flex-start;text-align:left;padding:.7rem .9rem;border-radius:12px!important;border:1px solid transparent!important;background:transparent!important;color:#161616!important;font-weight:720;box-shadow:none!important;}
-      [data-testid="stSidebar"] .stButton > button:hover {border-color:#161616!important;transform:translateX(3px);}
-      [data-testid="stSidebar"] .stButton > button[kind="primary"] {background:#161616!important;color:#F5F1E8!important;border-color:#161616!important;}
-      [data-testid="stSidebar"] .stButton > button p {font-size:.9rem;letter-spacing:.01em;}
-      [data-testid="stMainBlockContainer"] [data-testid="stHorizontalBlock"] {gap:.9rem!important;}
-      [data-testid="stMainBlockContainer"] .stButton {margin:.15rem 0 1.15rem;}
-      [data-testid="stMainBlockContainer"] div[data-testid="stMetric"] {margin-bottom:.7rem;}
-      [data-testid="stMainBlockContainer"] .flow-map {margin-top:1.25rem;margin-bottom:2.25rem;}
-      [data-testid="stMainBlockContainer"] .action-banner {margin-top:1.1rem;margin-bottom:1.4rem;}
-      .sidebar-brand{display:flex;align-items:center;gap:.75rem;padding:.45rem .15rem 1.35rem;border-bottom:1px solid #DED3C1;margin-bottom:1.25rem}
-      .sidebar-caption{font-size:.68rem;color:#A77825;font-weight:850;letter-spacing:.14em;text-transform:uppercase;margin:0 0 .55rem .2rem}
-      .topbar {display:flex; justify-content:space-between; align-items:center; min-height:88px; padding:.65rem 0;}
-      .brand {display:flex; align-items:center; gap:.75rem;}
-      .brand-mark {width:50px; height:50px; border-radius:50%; display:grid; place-items:center; background:#101116; color:white; font-size:1.35rem;border:1px solid #C7A65A;box-shadow:0 5px 16px rgba(62,45,14,.12);}
-      .brand-name {font-weight:850; color:#272A31; line-height:1.05;letter-spacing:-.03em;font-size:1.45rem;}
-      .brand-sub {font-size:.72rem; color:#8A8D94; margin-top:.2rem;}
-      .secure-note {font-size:.78rem; color:#0B0B14; background:#DCE9FB; border:1px solid #B7CBE8; border-radius:0; padding:.42rem .72rem;}
-      .nav-caption {font-size:.76rem;color:#718096;margin:.1rem 0 .35rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;}
-      .page-banner {height:245px;margin:0 0 3rem;padding:0 2rem;display:flex;align-items:center;justify-content:center;text-align:center;background:radial-gradient(circle at 52% 30%,rgba(183,143,60,.16),transparent 35%),linear-gradient(110deg,#090A0D,#1B1A17 52%,#060709);position:relative;overflow:hidden;}
-      .page-banner:before,.page-banner:after{content:'';position:absolute;width:420px;height:1px;background:linear-gradient(90deg,transparent,rgba(213,188,132,.35),transparent);transform:rotate(24deg)}
-      .page-banner:before{left:5%;top:36%}.page-banner:after{right:2%;bottom:28%;transform:rotate(-18deg)}
-      .page-banner-title{position:relative;z-index:2;color:#fff;font-size:3.2rem;font-weight:850;letter-spacing:-.04em;}
-      .page-banner-copy{position:relative;z-index:2;color:#C9C5BC;font-size:.9rem;margin-top:.55rem;letter-spacing:.02em;}
-      .system-shell{background:rgba(255,255,255,.5);border:1px solid #E6DDCD;border-radius:24px;padding:1.45rem;box-shadow:0 20px 55px rgba(64,49,24,.06);}
-      .home-hero {background:#E9EEF7; border:0; border-radius:0; padding:3.8rem 3.25rem; margin-bottom:1.7rem; position:relative; overflow:hidden;}
-      .home-hero {display:grid;grid-template-columns:minmax(0,1.35fr) minmax(270px,.65fr);gap:2rem;align-items:center;animation:fadeUp .55s ease both;}
-      .hero-visual {height:245px;position:relative;}
-      .doc-sheet {position:absolute;width:170px;height:215px;border-radius:0;background:rgba(255,255,255,.94);border:2px solid #0B0B14;box-shadow:12px 12px 0 #BFD6F5;padding:1.1rem;animation:float 5s ease-in-out infinite;}
-      .doc-sheet.si {left:8px;top:8px;transform:rotate(-4deg);}
-      .doc-sheet.bl {right:2px;top:24px;transform:rotate(5deg);animation-delay:-2.5s;}
-      .doc-tag {font-size:.68rem;font-weight:850;color:#2E6FB9;letter-spacing:.1em;}
-      .doc-line {height:7px;border-radius:0;background:#D8E1ED;margin-top:.8rem;}
-      .doc-line.short {width:62%;}.doc-line.alert {background:#78AEEF;width:78%;}
-      .compare-mark {position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);width:52px;height:52px;border-radius:50%;background:#0B0B14;color:white;display:grid;place-items:center;font-size:1.25rem;font-weight:900;box-shadow:6px 6px 0 #78AEEF;z-index:3;animation:pulse 2.8s ease-in-out infinite;}
-      .eyebrow {color:#2E6FB9; font-weight:850; font-size:.76rem; letter-spacing:.14em; text-transform:uppercase;}
-      .hero-title {font-size:3.3rem; line-height:1.02; letter-spacing:-.055em; color:#0B0B14; font-weight:760; max-width:760px; margin:.7rem 0 1rem;}
-      .hero-copy {font-size:1.05rem; color:#373B45; max-width:680px; line-height:1.7;}
-      .info-card {background:white; border:1px solid #e2e8ef; border-radius:16px; padding:1.25rem; min-height:178px; margin-bottom:1rem; box-shadow:0 6px 20px rgba(25,45,65,.04);}
-      .info-number {width:32px;height:32px;border-radius:10px;background:#e3f3ef;color:#0b6b62;display:grid;place-items:center;font-weight:800;margin-bottom:.85rem;}
-      .info-title {font-weight:780;color:#17364d;font-size:1.02rem;margin-bottom:.35rem;}
-      .info-copy {color:#667b8c;font-size:.88rem;line-height:1.55;}
-      .page-intro {margin-bottom:1.5rem;}
-      .page-title {font-size:2rem;font-weight:800;color:#151927;letter-spacing:-.02em;margin:0 0 .35rem;}
-      .page-copy {color:#60778a;font-size:1rem;max-width:760px;line-height:1.6;}
-      .step-card {background:white;border:1px solid #e1e8ee;border-radius:16px;padding:1.25rem;margin-bottom:1rem;}
-      .step-head {display:flex;gap:.8rem;align-items:center;margin-bottom:.45rem;}
-      .step-badge {background:#0b5c66;color:white;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:800;}
-      .step-title {font-weight:780;color:#17364d;font-size:1.05rem;}
-      .step-help {color:#667b8c;font-size:.88rem;margin-left:2.85rem;}
-      .action-banner {border-radius:16px;padding:1.2rem 1.35rem;margin:.75rem 0 1.1rem;border:1px solid;}
-      .action-banner.ok {background:#ecf8f3;border-color:#bfe5d5;color:#185d49;}
-      .action-banner.mismatch {background:#fff0ef;border-color:#f1c3bf;color:#8f2e2a;}
-      .action-banner.review {background:#fff7e6;border-color:#ecd39a;color:#805000;}
-      .action-title {font-size:1.05rem;font-weight:800;margin-bottom:.25rem;}
-      .action-copy {font-size:.9rem;line-height:1.5;}
-      .queue-card {background:white;border:1px solid #e2e8ef;border-radius:16px;padding:1rem 1.15rem;margin:.6rem 0;}
-      .queue-label {font-size:.72rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#718096;}
-      .queue-count {font-size:2rem;font-weight:820;color:#102a43;line-height:1.2;margin:.25rem 0;}
-      .queue-copy {font-size:.82rem;color:#667b8c;}
-      .journey {display:flex;align-items:flex-start;gap:0;margin:1rem 0 2rem;}
-      .journey-step {flex:1;position:relative;padding:0 1.25rem 0 0;animation:fadeUp .55s ease both;}
-      .journey-step:after {content:'';position:absolute;top:17px;left:42px;right:12px;height:2px;background:linear-gradient(90deg,#78AEEF,#D7E1EF);}
-      .journey-step:last-child:after {display:none;}
-      .journey-dot {width:35px;height:35px;border-radius:0;background:#0B0B14;color:white;display:grid;place-items:center;font-weight:800;position:relative;z-index:2;margin-bottom:.75rem;box-shadow:4px 4px 0 #8DBBFA;}
-      .journey-title {font-weight:800;color:#0B0B14;margin-bottom:.3rem;}
-      .journey-copy {color:#4D5360;font-size:.86rem;line-height:1.55;max-width:260px;}
-      .outcome-strip {display:flex;gap:1.1rem;flex-wrap:wrap;padding:1rem 0;border-top:1px solid #e4eaef;border-bottom:1px solid #e4eaef;}
-      .outcome-item {display:flex;align-items:center;gap:.55rem;color:#526b7e;font-size:.88rem;}
-      .outcome-icon {width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-weight:900;}
-      .outcome-icon.ok {background:#dcf4ea;color:#14664e}.outcome-icon.bad {background:#fde5e3;color:#9d332d}.outcome-icon.wait {background:#fff0cf;color:#8b5a00}
-      .queue-list {border-top:1px solid #e4eaef;margin-top:1rem;}
-      .queue-row {display:grid;grid-template-columns:1fr auto;gap:1rem;align-items:center;padding:1.1rem .15rem;border-bottom:1px solid #e4eaef;}
-      .queue-row-title {font-weight:800;color:#17364d}.queue-row-copy {color:#667b8c;font-size:.84rem;margin-top:.2rem}.queue-row-count {font-size:1.7rem;font-weight:850;color:#102a43;}
-      .mail-pane {background:#F9FBFE;border:1px solid #C9D3E1;border-radius:0;padding:1.1rem;min-height:310px;}
-      .mail-folders {margin-top:.65rem;}
-      .mail-folder {display:flex;justify-content:space-between;padding:.7rem .2rem;border-bottom:1px solid #edf1f4;color:#526b7e;font-size:.88rem;}
-      .mail-folder strong {color:#17364d;}
-      .mail-kicker {font-size:.7rem;color:#718096;font-weight:800;letter-spacing:.1em;text-transform:uppercase;}
-      .mail-subject {font-size:1.25rem;font-weight:800;color:#102a43;line-height:1.35;margin:.45rem 0 .75rem;}
-      .mail-meta {font-size:.82rem;color:#6b8092;padding-bottom:.8rem;border-bottom:1px solid #e8edf1;}
-      .mail-body {color:#425b70;font-size:.9rem;line-height:1.65;padding:1rem 0;white-space:pre-wrap;max-height:180px;overflow:auto;}
-      .attachment-chip {display:inline-block;background:#eff4f7;color:#425b70;border-radius:8px;padding:.35rem .55rem;margin:.2rem .25rem .1rem 0;font-size:.76rem;}
-      .plugin-panel {background:#0B0B14;color:white;border-radius:0;padding:1.2rem;min-height:310px;box-shadow:12px 12px 0 #8DBBFA;}
-      .plugin-label {font-size:.7rem;color:#8DBBFA;font-weight:800;letter-spacing:.1em;text-transform:uppercase;}
-      .plugin-status {font-size:1.25rem;font-weight:820;margin:.55rem 0;line-height:1.3;}
-      .plugin-copy {color:#d4e7e6;font-size:.85rem;line-height:1.55;}
-      .plugin-stat {display:flex;justify-content:space-between;border-top:1px solid rgba(255,255,255,.14);padding:.65rem 0;font-size:.82rem;}
-      .plugin-stat:first-of-type {margin-top:1rem;}
-      .plugin-stat span:last-child {font-weight:800;color:white;}
-      .flow-map {display:flex;align-items:stretch;margin:1rem 0 2rem;background:#FCFAF6;border:1px solid #E2D8C6;border-radius:18px;overflow:hidden;}
-      .flow-node {flex:1;padding:1.25rem;position:relative;min-height:125px;}
-      .flow-node + .flow-node {border-left:1px solid #E2D8C6;}
-      .flow-node + .flow-node:before {content:'→';position:absolute;left:-13px;top:43px;width:26px;height:26px;background:#B78A35;color:white;display:grid;place-items:center;border-radius:50%;font-size:.8rem;}
-      .flow-number {font-size:2rem;font-weight:850;color:#0B0B14;line-height:1;}
-      .flow-label {font-size:.76rem;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:#A77825;margin:.45rem 0 .3rem;}
-      .flow-copy {font-size:.78rem;color:#515968;line-height:1.45;}
-      .task-list {border-top:2px solid #0B0B14;margin-top:.7rem;}
-      .task-row {display:grid;grid-template-columns:44px 1fr auto;gap:.85rem;align-items:center;padding:1rem .25rem;border-bottom:1px solid #CDD6E2;}
-      .task-icon {width:34px;height:34px;background:#DCE9FB;display:grid;place-items:center;font-weight:900;color:#0B0B14;}
-      .task-name {font-weight:820;color:#0B0B14;}.task-help {font-size:.8rem;color:#626A78;margin-top:.18rem;}.task-count{font-size:1.4rem;font-weight:850;color:#0B0B14;}
-      .case-head {padding:1.3rem 0;border-top:2px solid #0B0B14;border-bottom:1px solid #CDD6E2;margin-bottom:1rem;}
-      .case-action {font-size:1.65rem;font-weight:850;letter-spacing:-.03em;color:#0B0B14;}
-      .case-subject {font-size:.9rem;color:#565E6C;margin-top:.35rem;}
-      .case-meta {display:flex;gap:1rem;flex-wrap:wrap;margin-top:.8rem;font-size:.78rem;color:#4D5563;}
-      .mini-pill {background:#EFE7D8;padding:.3rem .5rem;}
-      .side-menu{background:#fff;border:1px solid #E9E1D4;border-radius:20px;padding:1.15rem;margin-bottom:1rem;box-shadow:0 12px 30px rgba(60,43,17,.05)}
-      .side-menu-title{font-size:.68rem;color:#A77825;font-weight:850;letter-spacing:.14em;text-transform:uppercase;margin:.2rem .35rem .8rem}
-      .side-menu-item{padding:.78rem .9rem;border-radius:11px;background:#F7F5F1;margin:.45rem 0;color:#5D626C;font-size:.86rem;font-weight:720;display:flex;justify-content:space-between;align-items:center}
-      .side-menu-item.active{background:linear-gradient(90deg,#F7F5F1,#EEE3CF);color:#171B27;box-shadow:inset 3px 0 0 #B88B37}
-      .side-menu-badge{min-width:26px;height:26px;padding:0 .4rem;border-radius:13px;background:#fff;display:grid;place-items:center;color:#9A722B;font-size:.72rem}
-      @media (max-width:800px){.flow-map{display:block}.flow-node + .flow-node{border-left:0;border-top:1px solid #C9D3E1}.flow-node + .flow-node:before{display:none}}
-      @keyframes fadeUp {from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
-      @keyframes float {0%,100%{translate:0 0}50%{translate:0 -8px}}
-      @keyframes pulse {0%,100%{box-shadow:6px 6px 0 #78AEEF}50%{box-shadow:10px 10px 0 #78AEEF}}
-      @media (max-width:800px){.home-hero{grid-template-columns:1fr;padding:2rem}.hero-visual{display:none}.hero-title{font-size:2.15rem}.journey{display:block}.journey-step{padding:0 0 1.35rem 0}.journey-step:after{display:none}.secure-note{display:none}}
-      .section-label {font-size:.76rem; color:#557088; font-weight:750; letter-spacing:.12em; text-transform:uppercase; margin:1.5rem 0 .4rem;}
-      .result-note {padding: .9rem 1rem; border-radius: .75rem; background: #f5f8fb; border-left: 4px solid #557088;}
-      .status-track {display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin:.5rem 0 1.25rem;}
-      .status-step {padding:.5rem .8rem; border-radius:999px; background:#eaf0f5; color:#425b70; font-size:.78rem; font-weight:700;}
-      .status-step.done {background:#dff5ee; color:#12664f;}
-      .status-step.review {background:#fff0d5; color:#8a5200;}
-      .status-step.failed {background:#fee6e5; color:#a32d2a;}
-      .status-arrow {color:#8da0b1;}
-      .confidence-wrap {background:#f5f8fb; border:1px solid #dce5ef; border-radius:12px; padding:.9rem 1rem;}
-      .evidence-card {background:#fff; border:1px solid #dce5ef; border-radius:12px; padding:1rem; min-height:145px;}
-      .evidence-meta {color:#6b8092; font-size:.78rem; margin-bottom:.55rem;}
-      .evidence-value {font-weight:700; color:#102a43; margin-bottom:.55rem;}
-      .evidence-quote {background:#f5f8fb; padding:.65rem; border-radius:8px; color:#425b70; font-family:monospace; font-size:.8rem; white-space:pre-wrap;}
-      div[data-testid="stMetric"] {background: #fff; border: 1px solid #dce5ef; padding: .9rem; border-radius: 12px; box-shadow:0 3px 12px rgba(15,43,67,.04);}
-      div[data-testid="stDataFrame"] {border:1px solid #dce5ef; border-radius:12px; overflow:hidden;}
-      .stButton > button[kind="primary"] {border-radius:12px; font-weight:800; min-height:2.8rem;background:#B58A39;border-color:#B58A39;color:white;box-shadow:none;}
-      .stButton > button {border-radius:12px; font-weight:750;border:1px solid #D9C9A8;background:#FCFAF6;}
-      .stDownloadButton > button {border-radius:0; font-weight:800;}
-      header[data-testid="stHeader"] {background:transparent;height:0;}
-      #MainMenu {visibility:hidden;}
-      footer {visibility:hidden;}
-
-      /* Two-colour system: warm canvas + ink. Meaning comes from type, shape and icons. */
-      .stApp,[data-testid="stAppViewContainer"],.main {background:#F5F1E8!important;color:#161616!important;}
-      [data-testid="stSidebar"] {background:#F5F1E8!important;border-right:1px solid #161616!important;}
-      [data-testid="stSidebar"] label[data-baseweb="radio"] {background:#F5F1E8!important;border:1px solid #161616!important;}
-      [data-testid="stSidebar"] label[data-baseweb="radio"]:has(input:checked) {background:#161616!important;border-color:#161616!important;box-shadow:none!important;}
-      [data-testid="stSidebar"] label[data-baseweb="radio"]:has(input:checked) p {color:#F5F1E8!important;}
-      .brand-mark,.task-icon,.journey-dot,.compare-mark {background:#161616!important;color:#F5F1E8!important;border-color:#161616!important;box-shadow:none!important;}
-      .brand-name,.page-title,.info-title,.queue-row-title,.queue-row-count,.flow-number,.task-name,.task-count,.case-action {color:#161616!important;}
-      .brand-sub,.page-copy,.info-copy,.flow-copy,.task-help,.case-subject,.case-meta,.queue-row-copy {color:#161616!important;opacity:.68;}
-      .eyebrow,.section-label,.sidebar-caption,.side-menu-title,.flow-label,.doc-tag {color:#161616!important;}
-      .page-banner {background:#161616!important;}
-      .page-banner:before,.page-banner:after {background:#F5F1E8!important;opacity:.16;}
-      .page-banner-title,.page-banner-copy {color:#F5F1E8!important;}
-      .info-card,.queue-card,.mail-pane,.evidence-card,.confidence-wrap,div[data-testid="stMetric"],.flow-map,.side-menu {background:#F5F1E8!important;border-color:#161616!important;box-shadow:none!important;}
-      .step-card {background:#F5F1E8!important;border-color:#161616!important;box-shadow:none!important;}
-      .step-badge {background:#161616!important;color:#F5F1E8!important;}
-      .step-title,.step-help {color:#161616!important;}
-      [data-testid="stFileUploaderDropzone"] {background:#F5F1E8!important;border-color:#161616!important;}
-      [data-testid="stFileUploaderDropzone"] button {background:#F5F1E8!important;border-color:#161616!important;color:#161616!important;}
-      [data-testid="stFileUploaderDropzone"] svg {color:#161616!important;fill:#161616!important;}
-      .flow-node + .flow-node,.task-row,.case-head,.queue-row,.outcome-strip {border-color:#161616!important;}
-      .flow-node + .flow-node:before,.mini-pill,.info-number,.outcome-icon,.status-step,.action-banner {background:#161616!important;color:#F5F1E8!important;border-color:#161616!important;}
-      .action-banner *,.status-step * {color:#F5F1E8!important;}
-      .stButton > button[kind="primary"],.stDownloadButton > button[kind="primary"] {background:#161616!important;border-color:#161616!important;color:#F5F1E8!important;box-shadow:none!important;}
-      .stButton > button:not([kind="primary"]),.stDownloadButton > button {background:#F5F1E8!important;border-color:#161616!important;color:#161616!important;}
-      div[data-testid="stDataFrame"] {border-color:#161616!important;}
-      [data-testid="stAlert"] {background:#F5F1E8!important;color:#161616!important;border:1px solid #161616!important;}
-      code {color:#161616!important;background:#F5F1E8!important;border:1px solid #161616!important;}
-      .action-banner.ok {background:#E4F3EF!important;border-color:#0B6B63!important;color:#0B6B63!important;}
-      .action-banner.ok * {color:#0B6B63!important;}
-      .action-banner.mismatch {background:#FBE9E7!important;border-color:#A4362F!important;color:#A4362F!important;}
-      .action-banner.mismatch * {color:#A4362F!important;}
-      .action-banner.review {background:#FFF3D8!important;border-color:#7B5B16!important;color:#7B5B16!important;}
-      .action-banner.review * {color:#7B5B16!important;}
-      .result-mode-head {display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1px solid #161616;padding-bottom:1rem;margin-bottom:1.4rem;}
-      .result-mode-title {font-size:2rem;font-weight:850;letter-spacing:-.03em;color:#161616;}
-      .result-mode-copy {font-size:.88rem;color:#161616;opacity:.68;margin-top:.25rem;}
-      .bucket-copy {min-height:118px;border:1px solid #161616;border-radius:16px;padding:1.15rem;margin-top:.65rem;display:flex;flex-direction:column;justify-content:space-between;}
-      .bucket-copy b {font-size:1.8rem;color:#161616;}
-      .bucket-copy span {font-size:.82rem;color:#161616;opacity:.68;line-height:1.45;}
-      .files-found {display:flex;justify-content:space-between;align-items:center;gap:1rem;border-top:1px solid #161616;border-bottom:1px solid #161616;padding:1rem .15rem;margin:1.4rem 0 1rem;}
-      .files-found b {font-size:1.15rem;color:#161616;}.files-found span {font-size:.82rem;color:#161616;opacity:.66;}
-      .file-list-heading {font-size:.72rem;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:#161616;opacity:.62;padding:.15rem .1rem .45rem;}
-      .file-list-id {font-size:.86rem;font-weight:820;color:#161616;padding:.72rem .1rem;white-space:nowrap;}
-      .file-list-subject {font-size:.86rem;color:#161616;padding:.72rem .1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-      .file-status {display:inline-block;margin-top:.55rem;padding:.28rem .55rem;border:1px solid #161616;border-radius:999px;font-size:.72rem;font-weight:820;white-space:nowrap;}
-      .file-status.mismatch {background:#FBE9E7;border-color:#A4362F;color:#A4362F;}
-      .file-status.review {background:#FFF3D8;border-color:#7B5B16;color:#7B5B16;}
-      .file-status.passed {background:#E4F3EF;border-color:#0B6B63;color:#0B6B63;}
-      .file-list-rule {height:1px;background:#161616;opacity:.18;margin:-.15rem 0 .15rem;}
-    
-.dashboard-card {
-    background:#F5F1E8;
-    border:1px solid #161616;
-    border-radius:18px;
-    padding:1.25rem;
-    min-height:150px;
-}
-.dashboard-number {
-    font-size:2.4rem;
-    font-weight:850;
-    color:#161616;
-    margin:.5rem 0;
-}
-.dashboard-label {
-    font-size:.8rem;
-    font-weight:800;
-    letter-spacing:.08em;
-    text-transform:uppercase;
-    opacity:.65;
-}
-.dashboard-progress {
-    height:8px;
-    background:#DED8CC;
-    border-radius:10px;
-    overflow:hidden;
-    margin-top:.8rem;
-}
-.dashboard-progress span {
-    display:block;
-    height:100%;
-    background:#161616;
-}
-.alert-card {
-    border-radius:18px;
-    padding:1.2rem;
-    border:1px solid #161616;
-    min-height:130px;
-}
-.timeline-item {
-    border-left:2px solid #161616;
-    padding-left:1rem;
-    margin:.8rem 0;
-}
-
-
-.requirement-card {
-    background:#F5F1E8;
-    border:1px solid #161616;
-    border-radius:18px;
-    padding:1rem;
-    margin:.5rem 0;
-}
-.requirement-title {
-    font-weight:850;
-    margin-bottom:.4rem;
-}
-.requirement-copy {
-    opacity:.75;
-    line-height:1.45;
-}
-.mismatch-row {
-    padding:.8rem;
-    border-radius:12px;
-    background:#FFF0F0;
-    border:1px solid #D92D20;
-    margin:.5rem 0;
-}
-.review-row {
-    padding:.8rem;
-    border-radius:12px;
-    background:#FFF8E1;
-    border:1px solid #B54708;
-    margin:.5rem 0;
-}
-
-
-.verification-section-title {
-    font-size:1.15rem;
-    font-weight:850;
-    letter-spacing:-0.02em;
-    color:#161616;
-    margin:1.5rem 0 .6rem;
-}
-.verification-main-status {
-    font-size:2rem;
-    font-weight:850;
-    letter-spacing:-0.04em;
-    color:#161616;
-    line-height:1.15;
-}
-.verification-card-label {
-    font-size:.72rem;
-    font-weight:850;
-    letter-spacing:.08em;
-    text-transform:uppercase;
-    color:#161616;
-    opacity:.65;
-}
-.verification-card-value {
-    font-size:1rem;
-    font-weight:800;
-    color:#161616;
-    margin-top:.35rem;
-}
-
-
-/* Dashboard spacing refinement */
-.page-title {
-    margin-bottom: 0.45rem !important;
-}
-
-.page-copy {
-    margin-bottom: 1.6rem !important;
-}
-
-.section-label {
-    margin-top: 1.35rem !important;
-    margin-bottom: 0.7rem !important;
-}
-
-h1 {
-    margin-bottom: 0.5rem !important;
-}
-
-h2 {
-    margin-top: 1.1rem !important;
-    margin-bottom: 0.75rem !important;
-}
-
-h3 {
-    margin-top: 0.9rem !important;
-    margin-bottom: 0.6rem !important;
-}
-
-
-       .journey {
-           display:flex;
-           align-items:flex-start;
-           gap:0;
-           margin:2rem auto 2.25rem;
-           max-width:1100px;
-           justify-content:center;
-       }
-       .journey-step {
-           padding:0 1.25rem;
-       }
-
-</style>
-    """,
-    unsafe_allow_html=True,
-)
+st.markdown(f"<style>{(PROJECT_ROOT / 'styles.css').read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
 
 
 def uploaded_attachment(uploaded_file: Any) -> UploadedAttachment | None:
@@ -527,7 +182,7 @@ def render_evidence(detail: dict[str, Any]) -> None:
             for column, role, label in ((columns[0], "si", "Shipping Instruction"), (columns[1], "bl", "Draft Bill of Lading")):
                 item = evidence.get(role, {}).get(field_key, {})
                 value = extracted.get(role, {}).get(field_key, "—")
-                location = f'Page {item.get("page", 1)} · Line {item.get("line_start", "—")}'
+                location = (f'Page {item["page"]} · Line ' if item.get("page") else 'Paragraph/table row ') + str(item.get("line_start", "—"))
                 if item.get("line_end") != item.get("line_start"):
                     location += f'–{item.get("line_end")}'
                 column.markdown(
@@ -677,68 +332,115 @@ def render_version_summary(artifacts: ProcessingArtifacts) -> None:
 
 
 def render_single_result(artifacts: ProcessingArtifacts) -> None:
-    email=artifacts.emails[0]
-    email_id=email["email_id"]
-    result=artifacts.submission[email_id]
-    detail=artifacts.internal_results[email_id]
-
-    status=result["status"]
-    status_map={"MISMATCH":"🔴 Mismatch detected","NEEDS_REVIEW":"🟡 Human review required","OK":"🟢 Passed"}
-
-    section_label("Verification result")
-    st.markdown(
-        f'<div class="verification-main-status">{status_map.get(status,status)}</div>',
-        unsafe_allow_html=True
-    )
-    st.caption(email.get("subject","Untitled"))
-
-    section_label("Task status")
-    render_status_history(detail)
-
-    if status=="MISMATCH":
-        st.error("Action required: Correct the draft Bill of Lading.")
-    elif status=="NEEDS_REVIEW":
-        st.warning("Action required: Assign reviewer before approval.")
+    email = artifacts.emails[0]
+    email_id = email["email_id"]
+    result = artifacts.submission[email_id]
+    detail = artifacts.internal_results[email_id]
+    st.subheader(email.get("subject", "Untitled request"))
+    st.caption(f"{email_id} · {email.get('from', 'Unknown sender')}")
+    if result["category"] != "BL_COMPARISON":
+        st.info(f"Classified: {CATEGORY_LABELS[result['category']]}. No document comparison required.")
+    elif result["status"] == "MISMATCH":
+        st.error(f"{len(detail.get('mismatches', []))} field differences · Request a revised draft BL.")
+    elif result["status"] == "NEEDS_REVIEW":
+        st.warning(detail.get("detail") or "Manual verification required.")
     else:
-        st.success("No action required.")
-
-    section_label("Summary")
-    cols=st.columns(4)
-    data=[("Email ID",email_id),("Sender",email.get("from","-")),("Category",CATEGORY_LABELS[result["category"]]),("Confidence",f"{detail.get('classification_confidence',0):.0%}")]
-    for c,(l,v) in zip(cols,data):
-        with c:
-            st.markdown(
-                f"""
-                <div class="queue-card">
-                    <div class="verification-card-label">{html.escape(str(l))}</div>
-                    <div class="verification-card-value">{html.escape(str(v))}</div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-    if (detail.get("document_analysis") or {}).get("detections"):
-        section_label("Documents")
+        st.success("No mismatch detected across the seven shipment fields.")
+    comparison, source, analysis, history = st.tabs(["Comparison", "Documents & evidence", "AI cross-check", "Activity"])
+    with comparison:
+        if result["category"] == "BL_COMPARISON":
+            st.caption("Shipping Instruction is the reference. Compare the original values side by side.")
+            st.dataframe(comparison_rows(detail), hide_index=True, width="stretch")
+        else:
+            st.write(email.get("body", ""))
+    with source:
         render_document_types(detail)
+        render_evidence(detail)
+        with st.expander("Original email"):
+            st.write(email.get("body", ""))
+    with analysis:
+        render_ai_panel(detail)
+    with history:
+        render_status_history(detail)
+        render_version_info(detail)
+        render_error_history(detail) if detail.get("error_history") else None
 
-    if status=="MISMATCH":
-        section_label("Mismatch details")
-        for m in detail.get("mismatches",[]):
-            st.warning(f"{m['field']}\n\nSI: {m['si_value']}\n\nBL: {m['bl_value']}")
+def render_ai_panel(detail: dict[str, Any]) -> None:
+    ai = normalize_ai_result(detail.get("ai_analysis"))
+    with st.expander("Analysis activity · Rules + Gemini", expanded=True):
+        cols = st.columns(3)
+        cols[0].caption("01 · EMAIL TRIAGE")
+        cols[0].write(CATEGORY_LABELS.get(detail.get("category"), "Pending"))
+        cols[1].caption("02 · FIELD COMPARISON")
+        cols[1].write(detail.get("status", "Pending"))
+        cols[2].caption("03 · GEMINI SECOND OPINION")
+        cols[2].write(str(ai.get("status", "skipped")).replace("_", " ").title())
+        if ai.get("status") == "completed":
+            result = ai.get("result", {})
+            st.info(result.get("summary", "Analysis completed"))
+            for observation in result.get("observations", []):
+                st.write(f"• {observation}")
+        elif ai.get("status") in {"unavailable", "quota_exhausted"}:
+            from ai_service import failure_result
+            error = ai.get("error", "")
+            if "429" in error or "RESOURCE_EXHAUSTED" in error:
+                error = failure_result(RuntimeError(error))["error"]
+            st.warning(error or "Gemini is unavailable. The field comparison remains available.")
+            st.caption("AI quota is separate from document verification. Retrying does not increase the provider quota.")
+            if st.button("Retry AI cross-check only", key=f"retry_ai_{detail.get('email_id', 'single')}"):
+                from src.pipeline import _ai_cross_check
+                with st.spinner("Checking Gemini availability..."):
+                    detail["ai_analysis"] = _ai_cross_check(detail.get("extracted", {}))
+                st.rerun()
+        else:
+            st.caption("No Gemini analysis was performed for this result. Classification and field comparison use deterministic rules.")
+        if detail.get("human_review"):
+            st.caption("Any Gemini result above predates the human review. The reviewed comparison is the current result.")
 
-    section_label("Shipment comparison")
-    st.dataframe(comparison_rows(detail),hide_index=True,width="stretch")
 
-    section_label("Evidence")
-    render_evidence(detail)
+def render_mail_demo() -> None:
+    connected = st.session_state.get("demo_mail_connected", False)
+    st.markdown(f'<div class="mail-connection"><strong>{"● Demo mailbox connected" if connected else "○ Demo mailbox disconnected"}</strong><span>Simulation · no live email account</span></div>', unsafe_allow_html=True)
+    with st.popover("Mailbox controls & received requests"):
+        st.toggle("Connect demo mailbox", key="demo_mail_connected")
+        st.caption("Receive one bundled sample email on demand. This does not poll or send real mail.")
+        auto = st.toggle("Verify automatically on simulated arrival", key="demo_mail_auto")
+        if st.button("Simulate incoming email", disabled=not st.session_state.get("demo_mail_connected")):
+            inbox = open_local_inbox(DEMO_BUNDLE)
+            emails = inbox.emails()
+            index = st.session_state.get("demo_mail_index", 0)
+            email = emails[index % len(emails)]
+            st.session_state.demo_mail_pending = email
+            st.session_state.demo_mail_index = index + 1
+            st.toast(f"New demo email: {email['subject']}")
+        pending = st.session_state.get("demo_mail_pending")
+        if pending:
+            st.write(f"Received: {pending.get('subject', 'Untitled')}")
+            run = st.button("Verify received request", disabled=not st.session_state.get("demo_mail_connected"))
+            if st.session_state.get("demo_mail_connected") and (auto or run):
+                from src.pipeline import process_inbox
+                from src.service import SingleEmailInbox
+                with st.status("Analyzing received request", expanded=True) as activity:
+                    events = []
+                    def stage(email_id, label):
+                        events.append(label)
+                        activity.write(label)
+                    inbox = open_local_inbox(DEMO_BUNDLE)
+                    submission, details, summary = process_inbox(SingleEmailInbox(inbox, pending), stage_callback=stage)
+                    st.session_state.single_artifacts = ProcessingArtifacts([pending], submission, details, summary)
+                    activity.update(label="Request processed", state="complete")
+                st.session_state.pop("demo_mail_pending", None)
+                st.session_state.active_page = "Check one case"
+                st.rerun()
 
 
-def save_results_to_firebase(artifacts: ProcessingArtifacts) -> None:
+def save_results_to_firebase(artifacts: ProcessingArtifacts) -> dict[str, Any]:
     """Store verification results in Firebase Firestore."""
     if db is None:
-        return
+        return {"saved": 0, **firebase_status()}
 
     try:
+        saved = 0
         for email_id, result in artifacts.submission.items():
             detail = artifacts.internal_results.get(email_id, {})
 
@@ -760,10 +462,15 @@ def save_results_to_firebase(artifacts: ProcessingArtifacts) -> None:
                 ),
             }
 
-            db.collection("verification_results").add(record)
+            # Stable IDs make reruns idempotent instead of creating duplicates.
+            db.collection("verification_results").document(email_id).set(record, merge=True)
+            saved += 1
+
+        return {"saved": saved, **firebase_status()}
 
     except Exception as exc:
         print(f"Firebase save failed: {exc}")
+        return {"saved": 0, "configured": True, "connected": False, "error": str(exc)}
 
 
 def run_dataset_with_progress(bundle_path: str) -> ProcessingArtifacts:
@@ -781,6 +488,7 @@ def run_dataset_with_progress(bundle_path: str) -> ProcessingArtifacts:
 
     def update_stage(email_id: str, stage: str) -> None:
         live_stage.update(label=f"{stage} · {email_id}", state="running")
+        status_text.caption(f"{email_id} · {stage}")
 
     try:
         artifacts = process_dataset(bundle_path, update, update_stage)
@@ -790,7 +498,11 @@ def run_dataset_with_progress(bundle_path: str) -> ProcessingArtifacts:
     live_stage.update(label="Inbox analysis completed", state="complete", expanded=False)
 
     # Save cloud audit records
-    save_results_to_firebase(artifacts)
+    cloud_result = save_results_to_firebase(artifacts)
+    if cloud_result.get("saved"):
+        st.toast(f"Saved {cloud_result['saved']} audit records to Firestore")
+    elif cloud_result.get("error"):
+        st.warning(f"Local processing completed, but Firebase was unavailable: {cloud_result['error']}")
 
     return artifacts
 
@@ -904,188 +616,39 @@ def render_action_center(artifacts: ProcessingArtifacts) -> None:
 
 
 def render_inbox_workspace(artifacts: ProcessingArtifacts) -> None:
+    st.subheader("Work queue")
     email_by_id = {email["email_id"]: email for email in artifacts.emails}
-    records = normalized_inbox_records(
-        artifacts.emails, artifacts.submission, artifacts.internal_results
-    )
-
-    mismatches = [k for k, v in artifacts.submission.items() if v["status"] == "MISMATCH"]
-    failed = [
-        k for k, detail in artifacts.internal_results.items()
-        if detail.get("processing_status", detail.get("task_status")) == "Failed"
-    ]
-    reviews = [
-        k for k, v in artifacts.submission.items()
-        if v["status"] == "NEEDS_REVIEW" and k not in failed
-    ]
-    cleared = [
-        k for k, v in artifacts.submission.items()
-        if v["category"] == "BL_COMPARISON" and v["status"] == "OK"
-    ]
-
-    st.session_state.setdefault("inbox_bucket", "Mismatches")
-    st.session_state.setdefault("inbox_selected_id", None)
-
-    def choose_bucket(name):
-        st.session_state.inbox_bucket = name
-        st.session_state.inbox_selected_id = None
-
-    def choose_file(email_id):
-        if st.session_state.inbox_selected_id == email_id:
-            st.session_state.inbox_selected_id = None
-        else:
-            st.session_state.inbox_selected_id = email_id
-
-    section_label("Analysis results")
-
-    buckets = [
-        ("All files", f"• All files ({len(artifacts.emails)})", list(email_by_id)),
-        ("Mismatches", f"! Mismatch ({len(mismatches)})", mismatches),
-        ("Human review", f"? Human Review ({len(reviews)})", reviews),
-        ("Failed", f"× Failed ({len(failed)})", failed),
-        ("Passed", f"✓ Passed ({len(cleared)})", cleared),
-    ]
-
-    cols = st.columns(5)
-
-    for col, (name, label, _) in zip(cols, buckets):
-        with col:
-            st.button(
-                label,
-                key=f"bucket_{name}",
-                type="primary" if st.session_state.inbox_bucket == name else "secondary",
-                width="stretch",
-                on_click=choose_bucket,
-                args=(name,),
-            )
-
-    choices = {
-        "All files": list(email_by_id),
-        "Mismatches": mismatches,
-        "Human review": reviews,
-        "Failed": failed,
-        "Passed": cleared,
-    }[st.session_state.inbox_bucket]
-
-    st.markdown(
-        f'<div class="files-found"><b>{len(choices)} files found</b><span>Select a file to expand details.</span></div>',
-        unsafe_allow_html=True,
-    )
-
-    search_col, status_col, type_col, mismatch_col = st.columns([2, 1, 1, 1])
-    search = search_col.text_input(
-        "Search files",
-        placeholder="Search by email ID or subject",
-        key=f"search_{st.session_state.inbox_bucket}",
-    )
-    selected_status = status_col.selectbox(
-        "Status", ["All", "Processing", "Completed", "Review Required", "Failed"],
-        key=f"status_{st.session_state.inbox_bucket}",
-    )
-    selected_type = type_col.selectbox(
-        "Document type", ["All", "SI", "BL", "Invoice", "Unknown"],
-        key=f"document_type_{st.session_state.inbox_bucket}",
-    )
-    selected_mismatch = mismatch_col.selectbox(
-        "Mismatch", ["All", "Has Mismatches", "All Fields Match"],
-        key=f"mismatch_{st.session_state.inbox_bucket}",
-    )
-    filtered_records = useInboxFilters(
-        records,
-        {"status": selected_status, "document_type": selected_type, "mismatch_status": selected_mismatch},
-        search,
-    )
-    filtered = [email_id for email_id in choices if any(
-        record["email_id"] == email_id for record in filtered_records
-    )]
-
-    for email_id in filtered[:20]:
-
-        email = email_by_id[email_id]
-        subject = str(email.get("subject", "Untitled"))
-        result = artifacts.submission[email_id]
-
-        detail = artifacts.internal_results[email_id]
-        if detail.get("processing_status", detail.get("task_status")) == "Failed":
-            status = "Failed"
-            css = "mismatch"
-        elif result["status"] == "MISMATCH":
-            status = "Mismatch"
-            css = "mismatch"
-        elif result["status"] == "NEEDS_REVIEW":
-            status = "Human Review"
-            css = "review"
-        else:
-            status = "Passed"
-            css = "passed"
-
-        expanded = st.session_state.inbox_selected_id == email_id
-
-        row = st.container(border=True)
-
-        with row:
-            st.markdown(
-                f"""
-                **{html.escape(email_id)}**
-
-                {html.escape(subject)}
-
-                <span class="file-status {css}">{status}</span>
-                """,
-                unsafe_allow_html=True,
-            )
-            badge = version_badge(detail)
-            if badge:
-                st.caption(badge)
-
-            st.button(
-                "Collapse" if expanded else "View details",
-                key=f"view_{email_id}",
-                type="primary" if expanded else "secondary",
-                width="stretch",
-                on_click=choose_file,
-                args=(email_id,),
-            )
-
-            # IMPORTANT: detail appears directly under the selected item
-            if expanded:
-                st.markdown("### Verification details")
-
-                tab1, tab2, tab3 = st.tabs(
-                    ["Analysis result", "Source evidence", "Action"]
-                )
-
-                with tab1:
-                    st.dataframe(
-                        comparison_rows(detail),
-                        hide_index=True,
-                        width="stretch",
-                    )
-                    render_confidence(detail)
-                    render_version_info(detail)
-
-                with tab2:
-                    render_document_types(detail)
-                    st.write(f"**From:** {email.get('from', 'Unknown')}")
-                    st.write(email.get("body", "No message body"))
-                    render_evidence(detail)
-
-                with tab3:
-                    st.write(
-                        f"Status: {result['status'].replace('_',' ').title()}"
-                    )
-                    if result.get("review_reason"):
-                        st.write(result["review_reason"])
-                    if detail.get("error_history"):
-                        latest = detail["error_history"][-1]
-                        st.error(f"{latest.get('type', 'Error')}: {latest.get('message', 'Unknown processing error')}")
-                        st.caption(
-                            f"Attempts: {detail.get('processing_attempts', 1)} · "
-                            f"Retries: {detail.get('retry_count', 0)}"
-                        )
-
-    if not filtered:
-        st.info("No files match this search.")
+    left, right = st.columns([2, 1])
+    search = left.text_input("Search requests", placeholder="Email ID or subject", key="queue_search")
+    bucket = right.selectbox("Show", ["Needs attention", "All requests", "Mismatches", "Human review", "Passed", "Classification only"], key="queue_filter")
+    matches = []
+    for eid, result in artifacts.submission.items():
+        category, status = result["category"], result["status"]
+        if search.casefold() not in (eid + " " + email_by_id[eid].get("subject", "")).casefold():
+            continue
+        if bucket == "Needs attention" and status not in {"MISMATCH", "NEEDS_REVIEW"}: continue
+        if bucket == "Mismatches" and status != "MISMATCH": continue
+        if bucket == "Human review" and status != "NEEDS_REVIEW": continue
+        if bucket == "Passed" and (status != "OK" or category != "BL_COMPARISON"): continue
+        if bucket == "Classification only" and category == "BL_COMPARISON": continue
+        matches.append(eid)
+    st.caption(f"{len(matches)} requests match your filters")
+    if not matches:
+        st.info("No requests in this view. Change the filter to see other results.")
+        return
+    pages = max(1, (len(matches) + 19) // 20)
+    page = st.selectbox("Queue page", range(1, pages + 1), format_func=lambda n: f"{n} / {pages}", key="queue_page")
+    visible = matches[(page - 1) * 20:page * 20]
+    st.dataframe([{"Request": eid, "Subject": email_by_id[eid].get("subject", ""),
+                   "Category": CATEGORY_LABELS[artifacts.submission[eid]["category"]],
+                   "Outcome": artifacts.submission[eid]["status"] if artifacts.submission[eid]["category"] == "BL_COMPARISON" else "Classified"}
+                  for eid in visible], hide_index=True, width="stretch")
+    selected = st.selectbox("Open request", visible, format_func=lambda eid: f"{eid} · {email_by_id[eid].get('subject', '')}", key="queue_open")
+    with st.container(border=True):
+        render_single_result(single_case_artifacts(artifacts, selected))
+        if artifacts.submission[selected]["status"] == "NEEDS_REVIEW":
+            st.button("Review this request", key="queue_review",
+                      on_click=lambda: st.session_state.update(active_page="Human review", human_review_case=selected))
 
 
 def render_error_history(detail: dict[str, Any]) -> None:
@@ -1262,30 +825,42 @@ def render_human_review_dashboard(
                     }
                 )
             st.dataframe(rows, hide_index=True, width="stretch")
+            reply_id = st.selectbox("Prepare reply for reviewed request", resolved, key="reply_case")
+            draft = build_reply(email_by_id[reply_id], artifacts.internal_results[reply_id])
+            st.markdown("### Reply draft · not sent")
+            st.caption("Prepared from the saved review facts. Review and copy it into your mail client; no email is sent here.")
+            st.text_input("To", value=draft["to"], disabled=True, key=f"reply_to_{reply_id}")
+            st.text_input("Subject", value=draft["subject"], key=f"reply_subject_{reply_id}")
+            body = st.text_area("Reply message", value=draft["body"], height=320,
+                                key=f"reply_body_{reply_id}_{artifacts.internal_results[reply_id]['human_review']['reviewed_at']}")
+            st.download_button("Download reply draft", data=body, file_name=f"reply-{reply_id}.txt", mime="text/plain")
 
 
 with st.sidebar:
     st.markdown(
-        '<div class="sidebar-brand"><div class="brand-mark">C</div><div><div class="brand-name">CargoCheck</div><div class="brand-sub">Document verification</div></div></div><div class="sidebar-caption">Workspace</div>',
+        '<div class="sidebar-brand"><div class="brand-mark">C</div><div><div class="brand-name">CargoCheck</div><div class="brand-sub">Shipping operations</div></div></div>',
         unsafe_allow_html=True,
     )
     if "active_page" not in st.session_state:
         st.session_state.active_page = "Home"
-    nav_items = [
-        ("Home", "Dashboard"),
-        ("Check one case", "Verify one request"),
-        ("Analyze inbox", "Inbox operations"),
-        ("Human review", "Human review"),
-        ("Export results", "Submission center"),
-    ]
-    for destination, label in nav_items:
-        st.button(
-            label,
-            key=f"nav_{destination}",
-            type="primary" if st.session_state.active_page == destination else "secondary",
-            width="stretch",
-            on_click=lambda target=destination: st.session_state.update(active_page=target),
-        )
+    nav_groups = {
+        "Workspace": [("Home", "Overview")],
+        "01  Verification": [("Analyze inbox", "Inbox & work queue"), ("Check one case", "Single request")],
+        "02  Resolution": [("Human review", "Review & resolution")],
+        "03  Reporting": [("Export results", "Reports & submission")],
+    }
+    for group, children in nav_groups.items():
+        st.markdown(f'<div class="nav-parent">{group}</div>', unsafe_allow_html=True)
+        for destination, label in children:
+            st.button(label, key=f"nav_{destination}",
+                      type="primary" if st.session_state.active_page == destination else "secondary",
+                      width="stretch", on_click=lambda target=destination: st.session_state.update(active_page=target))
+    st.divider()
+    active_artifacts = st.session_state.get("dataset_artifacts")
+    st.caption(f"{len(active_artifacts.emails)} emails in workspace" if active_artifacts else "No inbox loaded yet")
+    st.caption("SI is the reference · 7 fields checked")
+    with st.expander("Demo mailbox", expanded=False):
+        render_mail_demo()
     page = st.session_state.active_page
 
 page_titles = {
@@ -1296,8 +871,9 @@ page_titles = {
     "Export results": ("Submission Center", "Validate and download the final verification results."),
 }
 banner_title, banner_copy = page_titles[page]
+parent = next(group for group, children in nav_groups.items() if any(key == page for key, _ in children))
 st.markdown(
-    f'<div class="page-banner"><div><div class="page-banner-title">{banner_title}</div><div class="page-banner-copy">{banner_copy}</div></div></div>',
+    f'<header class="workspace-header"><div class="breadcrumb">CargoCheck / {parent} / {banner_title}</div><h1>{banner_title}</h1><p>{banner_copy}</p></header>',
     unsafe_allow_html=True,
 )
 bundle_path = str(DEFAULT_BUNDLE)
@@ -1346,7 +922,7 @@ if page == "Home":
     with a: st.button("Verify one request",type="primary",width="stretch",on_click=go_to,args=("Check one case",))
     with b: st.button("Review inbox",width="stretch",on_click=go_to,args=("Analyze inbox",))
 
-    st.markdown("### Today's overview")
+    st.markdown("### Current workspace")
     c=st.columns(3)
     for col,(l,v) in zip(c,[("Emails processed",emails),("Document checks",checks),("Passed automatically",passed)]):
         with col: st.metric(l,v)
@@ -1370,8 +946,9 @@ elif page == "Check one case":
 
         st.markdown('<div class="step-card"><div class="step-head"><div class="step-badge">2</div><div class="step-title">Add the two shipping documents</div></div><div class="step-help">SI is the approved instruction. BL is the carrier draft that must be checked against it.</div></div>', unsafe_allow_html=True)
         upload_cols = st.columns(2)
-        si_file = upload_cols[0].file_uploader("Shipping Instruction (SI)", type=["txt", "pdf", "docx", "xlsx"], key="single_si", help="The reference document containing the intended shipment details.")
-        bl_file = upload_cols[1].file_uploader("Draft Bill of Lading (BL)", type=["txt", "pdf", "docx", "xlsx"], key="single_bl", help="The draft document CargoCheck will verify against the SI.")
+        st.caption("Supported: TXT, text-based PDF and Word (.docx). Scans need manual review; old .doc and spreadsheets are not supported.")
+        si_file = upload_cols[0].file_uploader("Shipping Instruction (SI)", type=["txt", "pdf", "docx"], key="single_si", help="The reference document containing the intended shipment details.")
+        bl_file = upload_cols[1].file_uploader("Draft Bill of Lading (BL)", type=["txt", "pdf", "docx"], key="single_bl", help="The draft document CargoCheck will verify against the SI.")
 
         st.markdown('<div class="step-card"><div class="step-head"><div class="step-badge">3</div><div class="step-title">Run the verification</div></div><div class="step-help">You will receive a field-by-field result, confidence level, and source evidence.</div></div>', unsafe_allow_html=True)
         if st.button("Verify documents", type="primary", width="stretch", key="process_single"):
@@ -1381,8 +958,9 @@ elif page == "Check one case":
                 st.error("Enter an email subject so CargoCheck can classify the request.")
             else:
                 try:
-                    with st.spinner("Classifying the email and checking the documents..."):
-                        st.session_state.single_artifacts = process_single_email(email, uploaded_attachment(si_file), uploaded_attachment(bl_file))
+                    with st.status("Analyzing request · Rules + Gemini", expanded=True) as activity:
+                        st.session_state.single_artifacts = process_single_email(email, uploaded_attachment(si_file), uploaded_attachment(bl_file), stage_callback=lambda eid, label: activity.write(label))
+                        activity.update(label="Analysis complete", state="complete")
                     st.rerun()
                 except (OSError, ValueError) as exc:
                     st.error(str(exc))
@@ -1413,8 +991,9 @@ elif page == "Analyze inbox":
         except (OSError, ValueError, RuntimeError) as exc:
             st.error(str(exc))
     if "dataset_artifacts" in st.session_state:
-        render_summary(st.session_state.dataset_artifacts)
-        render_version_summary(st.session_state.dataset_artifacts)
+        with st.expander("Batch overview & version tracking", expanded=False):
+            render_summary(st.session_state.dataset_artifacts)
+            render_version_summary(st.session_state.dataset_artifacts)
         render_inbox_workspace(st.session_state.dataset_artifacts)
 
 elif page == "Human review":
@@ -1427,6 +1006,7 @@ elif page == "Human review":
         st.warning(
             "No inbox results yet. Open **Inbox operations** and run the analysis first."
         )
+        st.button("Go to inbox", type="primary", on_click=go_to, args=("Analyze inbox",))
     else:
         render_human_review_dashboard(
             artifacts,
@@ -1438,6 +1018,7 @@ else:
     artifacts = st.session_state.get("dataset_artifacts")
     if artifacts is None:
         st.warning("No inbox results yet. Open **Analyze inbox** from the left menu and run the analysis first.")
+        st.button("Go to inbox", type="primary", on_click=go_to, args=("Analyze inbox",))
     else:
         render_summary(artifacts)
         section_label("Comparison results")
@@ -1500,7 +1081,7 @@ else:
         section_label("Official submission")
         if st.button("Validate submission", type="primary", width="stretch", key="generate_submission"):
             try:
-                resolved_bundle = str(Path(bundle_path).expanduser().resolve())
+                resolved_bundle = str(Path(st.session_state.get("dataset_bundle", bundle_path)).expanduser().resolve())
                 inbox_sample = json.loads((Path(resolved_bundle) / "sample_submission.json").read_text())
                 validate_submission(artifacts.submission, inbox_sample)
                 write_artifacts(artifacts, DEFAULT_OUTPUT)

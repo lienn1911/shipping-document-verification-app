@@ -1,4 +1,4 @@
-"""End-to-end inbox classification and plain-text document comparison."""
+"""End-to-end inbox classification and document comparison."""
 
 from __future__ import annotations
 
@@ -36,6 +36,20 @@ def _error_entry(exc: Exception) -> dict[str, str]:
         "message": str(exc) or repr(exc),
         "traceback": traceback.format_exc(),
     }
+
+
+def _ai_cross_check(extracted: dict[str, dict[str, str]]) -> dict[str, Any]:
+    """Run optional Gemini enrichment without making the core workflow depend on it."""
+    try:
+        from ai_service import analyze_shipping_document
+
+        return analyze_shipping_document(extracted)
+    except Exception as exc:
+        return {
+            "enabled": True,
+            "status": "unavailable",
+            "error": str(exc) or type(exc).__name__,
+        }
 
 
 DEFAULT_RESULT = {
@@ -91,6 +105,7 @@ def _process_comparison(
             "evidence": evidence,
             "field_confidence": {},
             "mismatches": [],
+            "ai_analysis": {"enabled": False, "status": "skipped"},
             "task_status": "Review",
             "processing_status": "Review Required",
             "processing_attempts": 1,
@@ -100,7 +115,7 @@ def _process_comparison(
             "status_history": _history("Review"),
         }
         return submission, detail
-    except Exception as exc:  # Keep one bad attachment from stopping the inbox.
+    except Exception as exc:
         submission = {
             "status": "NEEDS_REVIEW",
             "review_reason": "unreadable",
@@ -114,10 +129,12 @@ def _process_comparison(
             "internal_reason": "processing_error",
             "detail": str(exc) or repr(exc),
             "attachments": paths or list(email.get("attachments", [])),
+            "document_analysis": document_analysis,
             "extracted": extracted,
             "evidence": evidence,
             "field_confidence": {},
             "mismatches": [],
+            "ai_analysis": {"enabled": False, "status": "skipped"},
             "task_status": "Failed",
             "processing_status": "Failed",
             "processing_attempts": 1,
@@ -135,6 +152,11 @@ def _process_comparison(
         "defect_fields": defect_fields,
         "has_defect": bool(defect_fields),
     }
+    if stage_callback:
+        stage_callback(email["email_id"], "Gemini cross-check · checking availability")
+    ai_analysis = _ai_cross_check(extracted)
+    if stage_callback:
+        stage_callback(email["email_id"], f"Gemini cross-check · {ai_analysis.get('status', 'unknown')}")
     detail = {
         **comparison,
         "review_reason": None,
@@ -147,6 +169,7 @@ def _process_comparison(
             field: min(evidence["si"][field]["confidence"], evidence["bl"][field]["confidence"])
             for field in extracted["si"]
         },
+        "ai_analysis": ai_analysis,
         "task_status": "Completed",
         "processing_status": "Completed",
         "processing_attempts": 1,
@@ -165,9 +188,7 @@ def summarize_results(
     category_counts = Counter(record["category"] for record in submission.values())
     status_counts = Counter(record["status"] for record in submission.values())
     review_counts = Counter(
-        record["review_reason"]
-        for record in submission.values()
-        if record["review_reason"] is not None
+        record["review_reason"] for record in submission.values() if record["review_reason"] is not None
     )
     comparisons = [record for record in submission.values() if record["category"] == BL_COMPARISON]
     failed = sum(
@@ -198,7 +219,6 @@ def process_inbox(
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     submission: dict[str, Any] = {}
     internal_results: dict[str, Any] = {}
-
     for email in inbox:
         email_id = email["email_id"]
         if stage_callback:
@@ -221,6 +241,7 @@ def process_inbox(
                 "evidence": {},
                 "field_confidence": {},
                 "mismatches": [],
+                "ai_analysis": {"enabled": False, "status": "skipped"},
                 "task_status": "Completed",
                 "processing_status": "Completed",
                 "processing_attempts": 1,
@@ -229,7 +250,6 @@ def process_inbox(
                 "error_history": [],
                 "status_history": _history("Completed"),
             }
-
         submission[email_id] = {"category": category, **outcome}
         internal_results[email_id] = {
             "email_id": email_id,
@@ -241,10 +261,8 @@ def process_inbox(
         }
         if stage_callback:
             final_stage = (
-                "Processing failed"
-                if detail["task_status"] == "Failed"
-                else "Queued for human review"
-                if detail["task_status"] == "Review"
+                "Processing failed" if detail["task_status"] == "Failed"
+                else "Queued for human review" if detail["task_status"] == "Review"
                 else "Completed"
             )
             stage_callback(email_id, final_stage)
@@ -256,12 +274,10 @@ def validate_submission(submission: dict[str, Any], sample: dict[str, Any]) -> N
         missing = sorted(set(sample) - set(submission))
         extra = sorted(set(submission) - set(sample))
         raise ValueError(f"Submission email IDs do not match sample; missing={missing}, extra={extra}")
-
     expected_keys = {"category", "status", "review_reason", "defect_fields", "has_defect"}
     allowed_categories = {"BL_COMPARISON", "SI_REQUEST", "INVOICE_QUERY", "GENERAL", "SPAM"}
     allowed_statuses = {"OK", "MISMATCH", "NEEDS_REVIEW"}
     allowed_reasons = {None, "wrong_doc_type", "missing_attachment", "unreadable", "missing_value"}
-
     for email_id, record in submission.items():
         if set(record) != expected_keys:
             raise ValueError(f"{email_id} has incorrect keys: {sorted(record)}")

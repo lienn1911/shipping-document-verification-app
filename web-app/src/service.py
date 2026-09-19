@@ -146,6 +146,7 @@ def process_single_email(
     email: dict[str, Any],
     si_attachment: UploadedAttachment | None = None,
     bl_attachment: UploadedAttachment | None = None,
+    stage_callback: StageCallback | None = None,
 ) -> ProcessingArtifacts:
     required = ("email_id", "from", "subject", "body")
     missing = [key for key in required if key not in email]
@@ -167,7 +168,7 @@ def process_single_email(
         uploaded[path] = attachment.data
     prepared["attachments"] = prepared_paths
 
-    submission, internal_results, summary = process_inbox(MemoryInbox(prepared, uploaded))
+    submission, internal_results, summary = process_inbox(MemoryInbox(prepared, uploaded), stage_callback=stage_callback)
     return ProcessingArtifacts([prepared], submission, internal_results, summary)
 
 
