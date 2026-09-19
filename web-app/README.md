@@ -31,20 +31,12 @@ The parser uses a fixed alias table for labels such as `Load Port`, `POL`, and
 Unicode, container count, and KG number formatting. It does not use fuzzy
 matching.
 
-## AI and cloud integrations
+## Local-only design
 
-The authoritative classification, extraction, normalization, and comparison
-remain deterministic. Two optional integrations add meaningful capabilities:
-
-- Gemini produces a structured second-opinion risk summary after a successful
-  SI/BL comparison. Copy `.env.example` to `.env`, set `GEMINI_API_KEY`, and set
-  `GEMINI_AI_ENABLED=true`. Gemini failures never discard the local result.
-- Firebase Firestore stores an idempotent audit record per email. Place the
-  service-account JSON at `serviceAccountKey.json`, or set
-  `FIREBASE_SERVICE_ACCOUNT` to its path. Missing Firebase configuration does
-  not prevent the app from starting.
-
-Both secret files are excluded by `.gitignore`; never commit them.
+All classification, extraction, normalization, and comparison logic runs on
+the local machine. The application does not call an external API, use an LLM,
+or require an API key. Network access is only needed when you choose to submit
+the generated JSON to an official evaluation endpoint.
 
 ## Run the local web interface
 

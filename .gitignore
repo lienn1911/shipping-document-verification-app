@@ -7,5 +7,4 @@ output/
 sdoc-hackathon-bundle/
 sdoc-hackathon-docker/
 ground_truth.json
-web-app/.env
 web-app/serviceAccountKey.json
