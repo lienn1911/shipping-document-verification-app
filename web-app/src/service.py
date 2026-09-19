@@ -14,6 +14,7 @@ from .compare import compare_documents
 from .extract import FIELDS, ReviewRequired
 from .normalize import normalize_field
 from .pipeline import process_inbox, summarize_results, validate_submission
+from .versions import annotate_versions, refresh_changes
 
 
 ProgressCallback = Callable[[int, int, str], None]
@@ -129,6 +130,7 @@ def process_dataset(
         processing_inbox, stage_callback=stage_callback
     )
     validate_submission(submission, inbox.sample_submission())
+    annotate_versions(inbox, emails, internal_results)  # annotation only; submission is untouched
     if progress_callback is not None:
         final_id = emails[-1]["email_id"] if emails else ""
         progress_callback(len(emails), len(emails), final_id)
@@ -206,6 +208,7 @@ def retry_failed_email(
     updated = deepcopy(artifacts)
     updated.submission[email_id] = submission[email_id]
     updated.internal_results[email_id] = retried
+    annotate_versions(inbox, updated.emails, updated.internal_results)
     updated.summary = summarize_results(updated.submission, updated.internal_results)
     return updated
 
@@ -301,6 +304,7 @@ def apply_human_review(
                 }
 
     updated.internal_results[email_id] = previous
+    refresh_changes(updated.internal_results)
     updated.summary = summarize_results(updated.submission, updated.internal_results)
     return updated
 

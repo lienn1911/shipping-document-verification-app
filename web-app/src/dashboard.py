@@ -54,6 +54,23 @@ def _document_type(record: Mapping[str, Any]) -> str:
     return "Unknown"
 
 
+_DETECTED_TYPE_LABELS = {"SI": "SI", "BL": "BL", "INVOICE": "Invoice", "UNKNOWN": "Unknown"}
+
+
+def _document_types(record: Mapping[str, Any]) -> set[str]:
+    """Types of the attachments themselves, from content detection.
+
+    Falls back to the email-level guess when no attachment was analysed
+    (e.g. an email with no attachments).
+    """
+    detections = (record.get("document_analysis") or {}).get("detections") or {}
+    found = {
+        _DETECTED_TYPE_LABELS.get(str(item.get("type", "")).upper(), "Unknown")
+        for item in detections.values()
+    }
+    return found or {_document_type(record)}
+
+
 def useDashboardStats(inboxData: Iterable[Mapping[str, Any]]) -> dict[str, int | float]:
     """Calculate the six dashboard metrics from normalized inbox records."""
     records = list(inboxData)
@@ -95,7 +112,7 @@ def useInboxFilters(
             return False
         if selected_status != "All" and _status(record) != selected_status:
             return False
-        if selected_type != "All" and _document_type(record) != selected_type:
+        if selected_type != "All" and selected_type not in _document_types(record):
             return False
         if selected_mismatch == "Has Mismatches" and not _has_mismatch(record):
             return False

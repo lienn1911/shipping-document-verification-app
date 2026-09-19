@@ -273,6 +273,52 @@ def detect_document_type(
 
 
 # --------------------------------------------------------------------------- #
+# Revision markers (used to tell which of several versions is the latest)
+# --------------------------------------------------------------------------- #
+
+_REVISION_NUMBER = re.compile(r"\b(?:REV(?:ISION)?|VER(?:SION)?|AMENDMENT|V)\s*\.?\s*(\d{1,2})\b")
+_REVISED_WORDS = re.compile(r"\b(?:AMENDED|REVISED|CORRECTED|SUPERSEDES?)\b")
+_MARKER_LINES = 4  # revision marks live in the title area, never in body text
+
+
+def _marker_haystacks(text: str | None, filename: str | None) -> list[str]:
+    stems = [re.sub(r"[_\-]+", " ", Path(filename).stem)] if filename else []
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()][:_MARKER_LINES]
+    return [unicodedata.normalize("NFKC", h).upper() for h in stems + lines]
+
+
+def revision_marker(text: str | None, filename: str | None = None) -> int | None:
+    """Explicit revision number ("REV 2", "V3", "Amendment 1") from title lines or filename.
+
+    Deliberately ignores subjects and body text: "amend BL 057" is a shipment
+    reference and "V.51NW1" is a voyage, and neither is a revision number.
+    """
+    for haystack in _marker_haystacks(text, filename):
+        match = _REVISION_NUMBER.search(haystack)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def is_marked_revised(text: str | None, filename: str | None = None) -> bool:
+    """True when the title area says AMENDED / REVISED / CORRECTED (no number needed)."""
+    return any(_REVISED_WORDS.search(h) for h in _marker_haystacks(text, filename))
+
+
+def latest_revision(paths: list[str], text_of: dict[str, str | None]) -> str | None:
+    """Pick the newest of several same-type documents, or None if it is not clear.
+
+    Only explicit, distinct revision numbers decide; anything vaguer stays a
+    human decision rather than a guess.
+    """
+    markers = {path: revision_marker(text_of.get(path), path) for path in paths}
+    values = list(markers.values())
+    if any(v is None for v in values) or len(set(values)) != len(values):
+        return None
+    return max(markers, key=markers.get)
+
+
+# --------------------------------------------------------------------------- #
 # Deciding which attachment is the SI and which is the BL
 # --------------------------------------------------------------------------- #
 
@@ -282,6 +328,7 @@ class RoleAssignment:
     detections: dict[str, dict[str, Any]] = field(default_factory=dict)
     role_source: dict[str, str] = field(default_factory=dict)  # role -> content | filename_fallback
     swapped: bool = False  # filenames/slots said one thing, the content said the other
+    superseded: list[str] = field(default_factory=list)  # older revisions ignored in favour of a newer one
     problem: dict[str, str] | None = None  # review_reason / internal_reason / detail
 
 
@@ -331,15 +378,21 @@ def assign_roles(documents: list[tuple[str, str | None]]) -> RoleAssignment:
     sources: dict[str, str] = {}
     chosen: dict[str, str] = {}
     for role, by_content in (("SI", si), ("BL", bl)):
-        if len(by_content) > 1:
+        newest = latest_revision(by_content, dict(documents)) if len(by_content) > 1 else None
+        if len(by_content) > 1 and newest is None:
             names = ", ".join(Path(p).name for p in by_content)
             result.problem = _problem(
                 "unreadable",
                 "multiple_documents_same_type",
-                f"Found {len(by_content)} attachments that are each a {role}: {names}",
+                f"Found {len(by_content)} attachments that are each a {role} and no explicit "
+                f"revision number tells which is latest: {names}",
             )
             return result
-        if by_content:
+        if newest is not None:
+            chosen[role] = newest
+            sources[role] = "content_latest_revision"
+            result.superseded.extend(p for p in by_content if p != newest)
+        elif by_content:
             chosen[role] = by_content[0]
             sources[role] = "content"
         elif len(fallback[role]) == 1:
@@ -377,6 +430,6 @@ def assign_roles(documents: list[tuple[str, str | None]]) -> RoleAssignment:
     result.swapped = any(
         typed[path].filename_hint not in (None, role)
         for role, path in chosen.items()
-        if sources[role] == "content"
+        if sources[role].startswith("content")
     )
     return result
