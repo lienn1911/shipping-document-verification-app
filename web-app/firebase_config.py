@@ -9,6 +9,15 @@ from typing import Any
 _error: str | None = None
 
 
+def _load_local_env() -> None:
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(Path(__file__).with_name(".env"))
+    except ImportError:
+        pass
+
+
 def _credential_path() -> Path:
     configured = os.getenv("FIREBASE_SERVICE_ACCOUNT", "").strip()
     return Path(configured).expanduser() if configured else Path(__file__).with_name("serviceAccountKey.json")
@@ -16,6 +25,7 @@ def _credential_path() -> Path:
 
 def get_firestore_client() -> Any | None:
     global _error
+    _load_local_env()
     if os.getenv("FIREBASE_ENABLED", "true").strip().lower() not in {"1", "true", "yes", "on"}:
         _error = "Firebase is disabled"
         return None

@@ -34,7 +34,10 @@ def normalize_container_count(value: str) -> int | None:
 
 def normalize_weight_kg(value: str) -> Decimal | None:
     compact = normalize_text(value)
-    if not re.search(r"\bkgs?\b", compact):
+    # The review field is already labeled in kilograms, so a bare number is valid.
+    if not re.search(r"\bkgs?\b", compact) and not re.fullmatch(
+        r"[-+]?\d[\d,\s]*(?:\.\d+)?", compact
+    ):
         return None
     match = re.search(r"[-+]?\d[\d,\s]*(?:\.\d+)?", compact)
     if not match:
