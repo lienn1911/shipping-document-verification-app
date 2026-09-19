@@ -11,6 +11,12 @@ from typing import Any
 
 import streamlit as st
 
+# Firebase Cloud Infrastructure
+try:
+    from firebase_config import db
+except Exception:
+    db = None
+
 from src.pipeline import validate_submission
 from src.extract import FIELDS
 from src.reporting import (
@@ -726,6 +732,40 @@ def render_single_result(artifacts: ProcessingArtifacts) -> None:
     section_label("Evidence")
     render_evidence(detail)
 
+
+def save_results_to_firebase(artifacts: ProcessingArtifacts) -> None:
+    """Store verification results in Firebase Firestore."""
+    if db is None:
+        return
+
+    try:
+        for email_id, result in artifacts.submission.items():
+            detail = artifacts.internal_results.get(email_id, {})
+
+            record = {
+                "email_id": email_id,
+                "status": result.get("status", ""),
+                "category": result.get("category", ""),
+                "subject": next(
+                    (
+                        email.get("subject", "")
+                        for email in artifacts.emails
+                        if email.get("email_id") == email_id
+                    ),
+                    "",
+                ),
+                "mismatches": detail.get("mismatches", []),
+                "classification_confidence": detail.get(
+                    "classification_confidence", 0
+                ),
+            }
+
+            db.collection("verification_results").add(record)
+
+    except Exception as exc:
+        print(f"Firebase save failed: {exc}")
+
+
 def run_dataset_with_progress(bundle_path: str) -> ProcessingArtifacts:
     progress = st.progress(0.0)
     status_text = st.empty()
@@ -748,6 +788,10 @@ def run_dataset_with_progress(bundle_path: str) -> ProcessingArtifacts:
         live_stage.update(label="Inbox processing failed", state="error", expanded=True)
         raise
     live_stage.update(label="Inbox analysis completed", state="complete", expanded=False)
+
+    # Save cloud audit records
+    save_results_to_firebase(artifacts)
+
     return artifacts
 
 
