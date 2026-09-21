@@ -21,7 +21,7 @@ cannot decide, it escalates to a person with the evidence instead of guessing.
 | Versions | Detects **repeated emails and document revisions**, tracks the latest version per shipment and shows what changed |
 | Reports | Search and filters, statistics dashboard, JSON / CSV / PDF export, validated submission file |
 | Optional AI | **Gemini** (opt-in): reads scanned documents (vision) and adds a second-opinion risk summary per case |
-| Optional cloud | **Firebase Firestore** audit records (outcome, extracted values, mismatches, version tracking and every human-review decision; never email bodies or senders); deployable to Streamlit Community Cloud |
+| Optional cloud | **Firebase Firestore** audit records (outcome, extracted values, mismatches, version tracking and every human-review decision; never email bodies or senders), read back on a read-only **Saved results** page; deployable to Streamlit Community Cloud |
 | Extras | Simulated incoming email flow and editable reply drafts (nothing is sent) |
 
 The scored comparison is deterministic and explainable. Gemini transcribes scans and adds a second opinion; the transcription then goes through the same rules as any other document, and Gemini never overrides a comparison.

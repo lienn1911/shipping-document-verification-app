@@ -853,7 +853,7 @@ with st.sidebar:
         "Workspace": [("Home", "Overview")],
         "01  Verification": [("Analyze inbox", "Inbox & work queue"), ("Check one case", "Single request")],
         "02  Resolution": [("Human review", "Review & resolution")],
-        "03  Reporting": [("Export results", "Reports & submission")],
+        "03  Reporting": [("Export results", "Reports & submission"), ("Saved results", "Saved results")],
     }
     for group, children in nav_groups.items():
         st.markdown(f'<div class="nav-parent">{group}</div>', unsafe_allow_html=True)
@@ -875,6 +875,7 @@ page_titles = {
     "Analyze inbox": ("Inbox Operations", "Turn incoming shipping emails into a prioritized action queue."),
     "Human review": ("Human Review", "Confirm uncertain values, correct extraction results, and retry failed cases."),
     "Export results": ("Submission Center", "Validate and download the final verification results."),
+    "Saved results": ("Saved Results", "Audit records stored in Firebase Firestore: every outcome and every human-review decision."),
 }
 banner_title, banner_copy = page_titles[page]
 parent = next(group for group, children in nav_groups.items() if any(key == page for key, _ in children))
@@ -883,6 +884,76 @@ st.markdown(
     unsafe_allow_html=True,
 )
 bundle_path = str(DEFAULT_BUNDLE)
+
+
+def render_saved_results() -> None:
+    """Read-only view of the newest audit records in Firestore. Never changes analysis results."""
+    from src.cloud_records import SAVED_LIMIT, fetch_recent, review_changes_table, saved_rows, saved_summary
+
+    if db is None:
+        st.info(
+            "Firebase Firestore is not configured on this deployment, so there is nothing to read back. "
+            "Results are still processed and exported locally. Set the Firebase settings (see the README) to enable this page."
+        )
+        return
+    caption, refresh = st.columns([4, 1])
+    caption.caption(
+        f"Read-only: the newest {SAVED_LIMIT} audit records in Firestore. Each record holds the outcome, the values, "
+        "the mismatches and every human-review decision. It never holds the email body or the sender."
+    )
+    clicked = refresh.button("Refresh", key="saved_refresh", width="stretch")
+    if clicked or "saved_records" not in st.session_state:
+        try:
+            st.session_state.saved_records = fetch_recent(db, SAVED_LIMIT)
+            st.session_state.saved_error = None
+        except Exception as exc:  # the page must never break the app
+            st.session_state.saved_records = []
+            st.session_state.saved_error = f"Could not read from Firestore ({type(exc).__name__}). The analysis is unaffected."
+    if st.session_state.get("saved_error"):
+        st.warning(st.session_state.saved_error)
+        return
+    records = st.session_state.saved_records
+    if not records:
+        st.info("No records written by this version yet. Run **Inbox & work queue > Analyze inbox** or verify a single request; both save to Firestore.")
+        return
+    summary = saved_summary(records)
+    for column, (label, value) in zip(
+        st.columns(5),
+        [("Records shown", summary["records"]), ("Mismatch", summary["mismatch"]), ("Needs review", summary["needs_review"]),
+         ("Reviewed by a person", summary["reviewed"]), ("Read by Gemini vision", summary["read_by_ai"])],
+    ):
+        column.metric(label, f"{value:,}")
+    st.caption(f"These counts cover only the {summary['records']} records shown, not everything stored in the collection.")
+    st.dataframe(saved_rows(records), hide_index=True, width="stretch")
+    by_id = {str(record.get("email_id")): record for record in records}
+    selected = st.selectbox("Open a saved record", list(by_id), key="saved_open")
+    record = by_id[selected]
+    section_label("Saved record")
+    st.caption(f"{record.get('category', '')} · {record.get('status', '')} · saved {str(record.get('saved_at', '')).replace('T', ' ')[:19]} UTC")
+    mismatches = record.get("mismatches")
+    if isinstance(mismatches, list) and mismatches:
+        st.markdown("**Mismatches**")
+        st.dataframe(
+            [{"Field": m.get("field", ""), "SI": m.get("si_value", ""), "BL": m.get("bl_value", "")} for m in mismatches if isinstance(m, dict)],
+            hide_index=True, width="stretch",
+        )
+    extracted = record.get("extracted")
+    if isinstance(extracted, dict) and extracted.get("si") and extracted.get("bl"):
+        st.markdown("**Extracted values**")
+        fields = sorted(set(extracted["si"]) | set(extracted["bl"]))
+        st.dataframe(
+            [{"Field": FIELD_LABELS.get(f, f), "SI": extracted["si"].get(f, ""), "BL": extracted["bl"].get(f, "")} for f in fields],
+            hide_index=True, width="stretch",
+        )
+    review = record.get("human_review")
+    if isinstance(review, dict):
+        st.markdown("**Human review decision**")
+        st.write(f"{review.get('decision', '')} · {str(review.get('reviewed_at', '')).replace('T', ' ')[:19]} UTC" + (f" · note: {review['note']}" if review.get("note") else ""))
+        changes = review_changes_table(record)
+        if changes:
+            st.dataframe(changes, hide_index=True, width="stretch")
+    if record.get("read_by_ai") is True:
+        st.warning("At least one document in this record was a scan read by Gemini vision.")
 
 
 def go_to(destination: str) -> None:
@@ -1020,6 +1091,9 @@ elif page == "Human review":
             artifacts,
             st.session_state.get("dataset_bundle", bundle_path),
         )
+
+elif page == "Saved results":
+    render_saved_results()
 
 else:
     st.markdown('<div class="page-intro"><div class="page-title">Report and export</div><div class="page-copy">Review the comparison results, download operational reports in JSON, CSV, or PDF, and validate the official submission file.</div></div>', unsafe_allow_html=True)

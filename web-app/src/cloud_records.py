@@ -94,3 +94,63 @@ def save_cases(db: Any, artifacts: Any, email_ids: Iterable[str] | None = None) 
             saved += 1
         batch.commit()
     return saved
+
+
+SAVED_LIMIT = 50  # one read per record shown; keeps the page well inside the free daily read allowance
+
+
+def fetch_recent(db: Any, limit: int = SAVED_LIMIT) -> list[dict[str, Any]]:
+    """Newest records first (read-only).
+
+    Only records written by this version carry ``saved_at``, so older or hand-made documents in the same
+    collection are skipped by the ordered query instead of breaking the page.
+    """
+    query = db.collection(COLLECTION).order_by("saved_at", direction="DESCENDING").limit(limit)
+    records = []
+    for snapshot in query.stream():
+        data = dict(snapshot.to_dict() or {})
+        data.setdefault("email_id", getattr(snapshot, "id", ""))
+        records.append(data)
+    return records
+
+
+def _review(record: dict[str, Any]) -> dict[str, Any] | None:
+    review = record.get("human_review")
+    return review if isinstance(review, dict) else None
+
+
+def saved_rows(records: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """One display row per record; tolerant of missing or unexpected fields."""
+    return [
+        {
+            "Email": str(record.get("email_id", "")),
+            "Status": str(record.get("status", "")),
+            "Category": str(record.get("category", "")),
+            "Reason": str(record.get("review_reason") or ""),
+            "Subject": str(record.get("subject", ""))[:70],
+            "Saved (UTC)": str(record.get("saved_at", "")).replace("T", " ")[:19],
+            "Person reviewed": "Yes" if _review(record) else "",
+            "Read by Gemini vision": "Yes" if record.get("read_by_ai") is True else "",
+        }
+        for record in records
+    ]
+
+
+def saved_summary(records: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "records": len(records),
+        "mismatch": sum(record.get("status") == "MISMATCH" for record in records),
+        "needs_review": sum(record.get("status") == "NEEDS_REVIEW" for record in records),
+        "reviewed": sum(_review(record) is not None for record in records),
+        "read_by_ai": sum(record.get("read_by_ai") is True for record in records),
+    }
+
+
+def review_changes_table(record: dict[str, Any]) -> list[dict[str, str]]:
+    review = _review(record) or {}
+    changes = review.get("changed_fields")
+    return [
+        {"Document": str(c.get("document", "")), "Field": str(c.get("field", "")), "Before": str(c.get("before", "")), "After": str(c.get("after", ""))}
+        for c in (changes if isinstance(changes, list) else [])
+        if isinstance(c, dict)
+    ]
