@@ -71,6 +71,7 @@ Copy `web-app/.env.example` to `web-app/.env` and fill it in. Nothing here is re
 
 - **Gemini:** create a key in Google AI Studio, set `GEMINI_AI_ENABLED=true` and `GEMINI_API_KEY`.
   Run `python web-app/scripts/check_gemini.py` to list the model ids your key can use and set `GEMINI_MODEL`.
+  Gemini runs automatically for single requests and on demand per case (button); full-dataset runs skip it unless `GEMINI_BATCH_ENABLED=true`.
   If the model is overloaded (HTTP 503) the app automatically tries backup models (`GEMINI_FALLBACK_MODELS`; blank = built-in defaults, `none` = off).
 - **Firebase:** put the service-account JSON at `web-app/serviceAccountKey.json` (or point `FIREBASE_SERVICE_ACCOUNT` to it).
   Run `python web-app/scripts/check_firebase.py` to test the connection; add `--write` to write one test record.

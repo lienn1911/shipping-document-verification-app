@@ -126,8 +126,14 @@ def process_dataset(
     if progress_callback is not None:
         processing_inbox = ProgressInbox(inbox, emails, progress_callback)
 
+    try:
+        from ai_service import batch_ai_enabled
+
+        run_ai = batch_ai_enabled()
+    except ImportError:
+        run_ai = False
     submission, internal_results, summary = process_inbox(
-        processing_inbox, stage_callback=stage_callback
+        processing_inbox, stage_callback=stage_callback, run_ai=run_ai
     )
     validate_submission(submission, inbox.sample_submission())
     annotate_versions(inbox, emails, internal_results)  # annotation only; submission is untouched

@@ -396,6 +396,18 @@ def render_ai_panel(detail: dict[str, Any]) -> None:
                 with st.spinner("Checking Gemini availability..."):
                     detail["ai_analysis"] = _ai_cross_check(detail.get("extracted", {}))
                 st.rerun()
+        elif ai.get("reason") == "batch" and detail.get("extracted"):
+            from ai_service import integration_status as gemini_status
+
+            if gemini_status().get("status") == "ready":
+                st.caption("Gemini is not run automatically during batch analysis (it would send every case to Google and use up quota). Run it for this case:")
+                if st.button("Run Gemini second opinion", key=f"run_ai_{detail.get('email_id', 'single')}"):
+                    from src.pipeline import _ai_cross_check
+                    with st.spinner("Asking Gemini..."):
+                        detail["ai_analysis"] = _ai_cross_check(detail.get("extracted", {}))
+                    st.rerun()
+            else:
+                st.caption("Gemini is not configured. Classification and field comparison use deterministic rules.")
         else:
             st.caption("No Gemini analysis was performed for this result. Classification and field comparison use deterministic rules.")
         if detail.get("human_review"):
