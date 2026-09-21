@@ -962,9 +962,9 @@ elif page == "Check one case":
 
         st.markdown('<div class="step-card"><div class="step-head"><div class="step-badge">2</div><div class="step-title">Add the two shipping documents</div></div><div class="step-help">SI is the approved instruction. BL is the carrier draft that must be checked against it.</div></div>', unsafe_allow_html=True)
         upload_cols = st.columns(2)
-        st.caption("Supported: TXT, text-based PDF and Word (.docx). Scans need manual review; old .doc and spreadsheets are not supported.")
-        si_file = upload_cols[0].file_uploader("Shipping Instruction (SI)", type=["txt", "pdf", "docx"], key="single_si", help="The reference document containing the intended shipment details.")
-        bl_file = upload_cols[1].file_uploader("Draft Bill of Lading (BL)", type=["txt", "pdf", "docx"], key="single_bl", help="The draft document CargoCheck will verify against the SI.")
+        st.caption("Supported: TXT, text-based PDF, Word (.docx) and Excel (.xlsx). Scans need manual review; old .doc and .xls files are not supported.")
+        si_file = upload_cols[0].file_uploader("Shipping Instruction (SI)", type=["txt", "pdf", "docx", "xlsx"], key="single_si", help="The reference document containing the intended shipment details.")
+        bl_file = upload_cols[1].file_uploader("Draft Bill of Lading (BL)", type=["txt", "pdf", "docx", "xlsx"], key="single_bl", help="The draft document CargoCheck will verify against the SI.")
 
         st.markdown('<div class="step-card"><div class="step-head"><div class="step-badge">3</div><div class="step-title">Run the verification</div></div><div class="step-help">You will receive a field-by-field result, confidence level, and source evidence.</div></div>', unsafe_allow_html=True)
         if st.button("Verify documents", type="primary", width="stretch", key="process_single"):

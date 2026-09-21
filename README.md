@@ -12,7 +12,7 @@ cannot decide, it escalates to a person with the evidence instead of guessing.
 | Area | Capability |
 |---|---|
 | Classify | Sorts emails into BL check, SI request, invoice query, general and spam (rule-based, with a confidence score) |
-| Read | `.txt`, text-layer **PDF** and **DOCX** (tables included), with page/line source evidence |
+| Read | `.txt`, text-layer **PDF**, **DOCX** (tables included) and **XLSX**, with page/sheet and line source evidence |
 | Detect | Decides whether an attachment is an **SI, BL, Invoice or Unknown from its title**, never its filename; corrects swapped uploads |
 | Extract and normalise | Seven fields (shipper, consignee, notify party, ports, container count, gross weight in kg) with label aliases and unit/number normalisation |
 | Compare | SI vs BL side by side, with a plain-language reason per mismatch |
@@ -31,15 +31,16 @@ The scored comparison is deterministic and explainable. Gemini only adds a secon
 Run with AI and Firebase off:
 
 - Categories: 220 document checks · 125 SI requests · 75 invoice queries · 60 general · 40 spam.
-- Of the 220 document checks, **94 were compared automatically** (57 no mismatch, 37 mismatch) and 126 went to human review:
-  96 missing attachment, 15 XLSX (not yet supported), 5 wrong document type, 5 unreadable (3 scanned, 2 corrupt), 5 missing value.
-- Duplicate and version tracking: 15 repeated emails, 108 shipments tracked, 0 revisions (the dataset contains none; use the demo bundle below).
+- Of the 220 document checks, **109 were compared automatically** (63 no mismatch, 46 mismatch) and 111 went to human review:
+  96 missing attachment, 5 wrong document type, 5 unreadable (3 scanned, 2 corrupt), 5 missing value.
+- We checked every reported mismatch for formatting-only differences (punctuation, spacing, address layout): none was, so the mismatch rate reflects real differences.
+- Duplicate and version tracking: 15 repeated emails, 123 shipments tracked, 0 revisions (the dataset contains none; use the demo bundle below).
 - No accuracy score is claimed: the official scoring endpoint was not available to us, and we did not use any answer key.
 
 ## Architecture
 
 ```
-email JSON ─► classify ─► read attachments (txt / pdf / docx) ─► detect document type ─► extract 7 fields
+email JSON ─► classify ─► read attachments (txt / pdf / docx / xlsx) ─► detect document type ─► extract 7 fields
    ─► normalise ─► compare ─► confidence & review rules ─► version/duplicate annotation ─► results
                                                                     │
                                      Streamlit UI · exports · (optional) Gemini · (optional) Firestore
@@ -85,7 +86,7 @@ cd web-app
 python -m unittest discover -s tests
 ```
 
-74 tests, no keys or network needed.
+No keys or network needed.
 
 ## Deploy to Streamlit Community Cloud
 
@@ -119,8 +120,8 @@ sample-upload/      files for the single-request demo
 
 ## Limitations and next steps
 
-- **XLSX** attachments (15 emails) are not read yet; they go to human review with an explicit reason.
 - **Scanned PDFs** need OCR or a vision model; today they are routed to human review.
+- **XLSX** sheets are read as label/value rows; a bare number in a weight row is taken to be kilograms, because the sheets carry no unit.
 - Classification uses the subject and rules; reading the email body with an LLM would handle misleading subjects.
 - Party names are compared after normalisation; address-only differences are not yet treated as a warning.
 - The mailbox is simulated; a real inbox connector is future work.

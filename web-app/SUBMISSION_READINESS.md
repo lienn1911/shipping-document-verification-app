@@ -5,16 +5,17 @@
 Measured on the full 520-email participant bundle with Gemini and Firebase disabled (74 automated tests pass):
 
 - Categories: BL_COMPARISON 220; SI_REQUEST 125; INVOICE_QUERY 75; GENERAL 60; SPAM 40.
-- Comparison requests: **94 compared automatically** (57 no mismatch, 37 mismatch); 126 sent to human review:
-  96 missing attachment, 15 unsupported XLSX, 5 wrong document type, 5 unreadable (3 scanned PDFs, 2 corrupt PDFs), 5 missing value.
-- Since the 2026-09-19 audit: text-layer PDF and DOCX readers, content-based document-type detection,
+- Comparison requests: **109 compared automatically** (63 no mismatch, 46 mismatch); 111 sent to human review:
+  96 missing attachment, 5 wrong document type, 5 unreadable (3 scanned PDFs, 2 corrupt PDFs), 5 missing value.
+- Every reported mismatch was checked for formatting-only differences (punctuation, spacing, address layout); none was.
+- Since the 2026-09-19 audit: text-layer PDF, DOCX and XLSX readers, content-based document-type detection,
   duplicate/version tracking, normalisation fixes.
-- Version tracking: 15 repeated emails and 108 tracked shipments; the dataset has no revisions, so revisions are shown with
+- Version tracking: 15 repeated emails and 123 tracked shipments; the dataset has no revisions, so revisions are shown with
   the synthetic demo bundle in `web-app/demo/versions-bundle`.
 - Hosting: repository root `requirements.txt`, `.streamlit/config.toml` and secrets support (`GEMINI_*`,
   `FIREBASE_SERVICE_ACCOUNT_JSON`) so the app can be deployed to Streamlit Community Cloud.
-- Still unsupported: **XLSX** (15 emails) and **scanned PDFs** (3 emails, OCR or a vision model needed). Both are escalated
-  to human review with an explicit reason, not guessed.
+- Still unsupported: **scanned PDFs** (3 emails, OCR or a vision model needed). They are escalated to human review with an
+  explicit reason, not guessed.
 - Still no accuracy claim: the official scoring endpoint was unavailable and no answer key was used.
 
 The sections below are the original 2026-09-19 audit, kept for history.
