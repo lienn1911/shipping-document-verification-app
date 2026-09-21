@@ -629,8 +629,9 @@ def render_inbox_workspace(artifacts: ProcessingArtifacts) -> None:
         if bucket == "Needs attention" and status not in {"MISMATCH", "NEEDS_REVIEW"}: continue
         if bucket == "Mismatches" and status != "MISMATCH": continue
         if bucket == "Human review" and status != "NEEDS_REVIEW": continue
-        if bucket == "Passed" and (status != "OK" or category != "BL_COMPARISON"): continue
-        if bucket == "Classification only" and category == "BL_COMPARISON": continue
+        no_documents = artifacts.internal_results.get(eid, {}).get("internal_reason") == "no_documents_expected"
+        if bucket == "Passed" and (status != "OK" or category != "BL_COMPARISON" or no_documents): continue
+        if bucket == "Classification only" and category == "BL_COMPARISON" and not no_documents: continue
         matches.append(eid)
     st.caption(f"{len(matches)} requests match your filters")
     if not matches:
@@ -718,6 +719,8 @@ def render_human_review_dashboard(
             st.caption(
                 f"Reason: {result.get('review_reason') or detail.get('internal_reason') or 'Verification required'}"
             )
+            if detail.get("internal_reason") == "ai_read_needs_confirmation":
+                st.warning(detail.get("detail") or "A scan was read by Gemini vision. Confirm the values against the original.")
             st.write(email.get("body", ""))
             st.dataframe(comparison_rows(detail), hide_index=True, width="stretch")
             st.markdown("### Confirm or correct extracted values")

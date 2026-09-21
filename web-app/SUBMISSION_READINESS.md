@@ -2,11 +2,12 @@
 
 ## Update — 2026-09-21 (supersedes the numbers and limits below)
 
-Measured on the full 520-email participant bundle with Gemini and Firebase disabled (74 automated tests pass):
+Measured on the full 520-email participant bundle with Gemini and Firebase disabled (150 automated tests pass):
 
 - Categories: BL_COMPARISON 220; SI_REQUEST 125; INVOICE_QUERY 75; GENERAL 60; SPAM 40.
-- Comparison requests: **109 compared automatically** (63 no mismatch, 46 mismatch); 111 sent to human review:
-  96 missing attachment, 5 wrong document type, 5 unreadable (3 scanned PDFs, 2 corrupt PDFs), 5 missing value.
+- Document-check emails: 220. 91 only ask for a draft BL to be sent (nothing to compare: not escalated, not counted as verified).
+  Of the other 129, **109 compared automatically** (63 no mismatch, 46 mismatch) and 20 sent to human review:
+  5 missing attachment, 5 wrong document type, 5 unreadable (3 scans read by Gemini vision and pre-filled for confirmation, 2 corrupt PDFs), 5 missing value.
 - Every reported mismatch was checked for formatting-only differences (punctuation, spacing, address layout); none was.
 - Since the 2026-09-19 audit: text-layer PDF, DOCX and XLSX readers, content-based document-type detection,
   duplicate/version tracking, normalisation fixes.
@@ -14,11 +15,15 @@ Measured on the full 520-email participant bundle with Gemini and Firebase disab
   the synthetic demo bundle in `web-app/demo/versions-bundle`.
 - Hosting: repository root `requirements.txt`, `.streamlit/config.toml` and secrets support (`GEMINI_*`,
   `FIREBASE_SERVICE_ACCOUNT_JSON`) so the app can be deployed to Streamlit Community Cloud.
-- Scanned PDFs (3 emails): read with Gemini vision when Gemini is configured, shown with a warning and lower confidence;
-  otherwise (or if Gemini fails) escalated to human review with an explicit reason. Verified with stubbed transcriptions;
-  run `scripts/check_vision.py` with a real key to measure the live result.
+- Scanned PDFs (3 emails): read with Gemini vision when Gemini is configured and pre-filled in the review form (lower confidence, warning,
+  preview of the comparison); a person always confirms. Without Gemini, or if it fails, escalated with an explicit reason. Live-checked with a
+  real key on all three pairs (`scripts/check_vision.py`).
 - Firestore now stores richer audit records (extracted values, mismatches, versions, human-review decisions) in batched writes.
-- Still no accuracy claim: the official scoring endpoint was unavailable and no answer key was used.
+- Scoring (2026-09-21): we ran the organisers' scoring tool against a reference regenerated with their generator, first verified identical to the
+  participant dataset (all 520 emails byte-identical; the 260 non-text attachments identical in extracted content). Result: classification 100%,
+  comparison exact-match 100%, 46/46 defect emails caught end to end, escalation recall and precision 100% (20 of 20 with the right reason).
+  Limits: same data we developed on, not held out; two behaviours were adjusted after the escalation diagnostic showed over-escalation (91 emails
+  that only ask for a draft BL to be sent; scans now always confirmed by a person). Both are wording/behaviour rules covered by tests.
 
 The sections below are the original 2026-09-19 audit, kept for history.
 

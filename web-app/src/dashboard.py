@@ -31,6 +31,8 @@ def _status(record: Mapping[str, Any]) -> str:
 
 
 def _is_comparison(record: Mapping[str, Any]) -> bool:
+    if record.get("internal_reason") == "no_documents_expected":  # asked for a document to be sent: nothing to compare
+        return False
     return str(record.get("category", "")) == COMPARISON_CATEGORY or bool(
         record.get("is_comparison")
     )

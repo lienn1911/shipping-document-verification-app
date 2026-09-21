@@ -10,6 +10,7 @@ from typing import Any, Callable
 from .classify import BL_COMPARISON, classify_email
 from .compare import compare_documents
 from .extract import ReviewRequired, extract_attachment_with_evidence, identify_attachments_by_content
+from .request_intent import asks_for_document_to_be_sent
 
 
 CONFIDENCE_REVIEW_THRESHOLD = 0.75
@@ -67,6 +68,27 @@ def _process_comparison(
     extracted: dict[str, dict[str, str]] = {}
     evidence: dict[str, dict[str, dict[str, Any]]] = {}
     document_analysis: dict[str, Any] = {}
+    if len(email.get("attachments", [])) < 2 and asks_for_document_to_be_sent(email):
+        return dict(DEFAULT_RESULT), {
+            "status": "OK",
+            "message": "This email asks for a draft BL to be sent. It carries no documents, so there is nothing to compare.",
+            "review_reason": None,
+            "internal_reason": "no_documents_expected",
+            "attachments": list(email.get("attachments", [])),
+            "document_analysis": {},
+            "extracted": {},
+            "evidence": {},
+            "field_confidence": {},
+            "mismatches": [],
+            "ai_analysis": {"enabled": False, "status": "skipped"},
+            "task_status": "Completed",
+            "processing_status": "Completed",
+            "processing_attempts": 1,
+            "retry_count": 0,
+            "retryable": False,
+            "error_history": [],
+            "status_history": _history("Completed"),
+        }
     try:
         paths, document_analysis = identify_attachments_by_content(
             inbox, list(email.get("attachments", []))
@@ -88,6 +110,18 @@ def _process_comparison(
             item.get("read_method") == "gemini_vision" for role_evidence in evidence.values() for item in role_evidence.values()
         )
         comparison = compare_documents(extracted["si"], extracted["bl"], ignore_punctuation=vision_read)
+        if vision_read:
+            preview = comparison["message"]
+            if comparison["mismatches"]:
+                preview += " Fields: " + ", ".join(item["field"] for item in comparison["mismatches"]) + "."
+            if comparison.get("ignored_punctuation"):
+                preview += " Punctuation-only differences ignored: " + ", ".join(comparison["ignored_punctuation"]) + "."
+            raise ReviewRequired(
+                "unreadable",
+                "ai_read_needs_confirmation",
+                "A scanned document was read by Gemini vision, so a person must confirm the values before they are "
+                "trusted (the reading is pre-filled in the review form). Preview of the comparison: " + preview,
+            )
     except ReviewRequired as exc:
         document_analysis = exc.document_analysis or document_analysis
         submission = {
@@ -197,7 +231,11 @@ def summarize_results(
     review_counts = Counter(
         record["review_reason"] for record in submission.values() if record["review_reason"] is not None
     )
-    comparisons = [record for record in submission.values() if record["category"] == BL_COMPARISON]
+    comparisons = [
+        record for email_id, record in submission.items()
+        if record["category"] == BL_COMPARISON
+        and internal_results.get(email_id, {}).get("internal_reason") != "no_documents_expected"
+    ]
     failed = sum(
         detail.get("processing_status", detail.get("task_status")) == "Failed"
         for detail in internal_results.values()
