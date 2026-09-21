@@ -9,3 +9,9 @@ sdoc-hackathon-docker/
 ground_truth.json
 web-app/.env
 web-app/serviceAccountKey.json
+
+# secrets
+.streamlit/secrets.toml
+web-app/.streamlit/secrets.toml
+serviceAccountKey.json
+*serviceAccount*.json

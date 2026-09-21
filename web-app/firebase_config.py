@@ -1,7 +1,14 @@
-"""Safe, optional Firebase Admin initialization."""
+"""Safe, optional Firebase Admin initialization.
+
+Credentials can come from a local file (development) or from the
+FIREBASE_SERVICE_ACCOUNT_JSON setting (hosting), which holds the service-account
+JSON itself or its base64 encoding. Error text never includes credential contents.
+"""
 
 from __future__ import annotations
 
+import base64
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -10,17 +17,31 @@ _error: str | None = None
 
 
 def _load_local_env() -> None:
-    try:
-        from dotenv import load_dotenv
+    from env_loader import load_environment
 
-        load_dotenv(Path(__file__).with_name(".env"))
-    except ImportError:
-        pass
+    load_environment()
 
 
 def _credential_path() -> Path:
     configured = os.getenv("FIREBASE_SERVICE_ACCOUNT", "").strip()
     return Path(configured).expanduser() if configured else Path(__file__).with_name("serviceAccountKey.json")
+
+
+def _inline_credentials() -> dict[str, Any] | None:
+    """Parse FIREBASE_SERVICE_ACCOUNT_JSON (raw JSON or base64). None if not set."""
+    raw = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
+    if not raw:
+        return None
+    if not raw.startswith("{"):
+        raw = base64.b64decode(raw, validate=True).decode("utf-8")
+    parsed = json.loads(raw)
+    if not isinstance(parsed, dict):
+        raise ValueError("not a JSON object")
+    return parsed
+
+
+def _credentials_available() -> bool:
+    return bool(os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()) or _credential_path().is_file()
 
 
 def get_firestore_client() -> Any | None:
@@ -29,8 +50,13 @@ def get_firestore_client() -> Any | None:
     if os.getenv("FIREBASE_ENABLED", "true").strip().lower() not in {"1", "true", "yes", "on"}:
         _error = "Firebase is disabled"
         return None
+    try:
+        inline = _inline_credentials()
+    except Exception:
+        _error = "FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON or base64 JSON"
+        return None
     key_path = _credential_path()
-    if not key_path.is_file():
+    if inline is None and not key_path.is_file():
         _error = f"Firebase service-account file not found: {key_path}"
         return None
     try:
@@ -38,16 +64,17 @@ def get_firestore_client() -> Any | None:
         from firebase_admin import credentials, firestore
 
         if not firebase_admin._apps:
-            firebase_admin.initialize_app(credentials.Certificate(str(key_path)))
+            firebase_admin.initialize_app(credentials.Certificate(inline if inline is not None else str(key_path)))
         _error = None
         return firestore.client()
     except Exception as exc:
-        _error = str(exc) or type(exc).__name__
+        # Certificate errors can echo parts of the credential; report only the type.
+        _error = "Firebase rejected the credentials" if inline is not None else (str(exc) or type(exc).__name__)
         return None
 
 
 def integration_status() -> dict[str, Any]:
-    return {"configured": _credential_path().is_file(), "connected": db is not None, "error": _error}
+    return {"configured": _credentials_available(), "connected": db is not None, "error": _error}
 
 
 db = get_firestore_client()

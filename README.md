@@ -1,84 +1,124 @@
-# Shipping Document Checker
+# CargoCheck — Shipping Document Verification
 
-A minimal, explainable shipping document verification pipeline for the SDOC
-hackathon. It implements only the required basic workflow:
+**Team FiveMinds · Averis x Monash Hackathon 2026**
 
-- read every participant-bundle email JSON record;
-- classify emails into `BL_COMPARISON`, `SI_REQUEST`, `INVOICE_QUERY`,
-  `GENERAL`, or `SPAM`;
-- process only `BL_COMPARISON` emails;
-- read plain-text SI and BL attachments;
-- extract and compare the seven required shipment fields;
-- preserve the SI and BL values for every mismatch;
-- send missing, unsupported, or unreliable cases to manual review;
-- generate a submission matching `sample_submission.json`.
+Shipping teams compare a Shipping Instruction (SI) with a draft Bill of Lading (BL) by hand, and a missed
+discrepancy means corrections and delays. CargoCheck reads an inbox, finds the document-check requests,
+compares the seven shipment fields, and explains every mismatch with the source line it came from. When it
+cannot decide, it escalates to a person with the evidence instead of guessing.
 
-PDF, DOCX, XLSX, scanned documents, and OCR are outside this basic version.
-Those attachments are marked `NEEDS_REVIEW` instead of being guessed.
+## What it does
 
-## Required fields
+| Area | Capability |
+|---|---|
+| Classify | Sorts emails into BL check, SI request, invoice query, general and spam (rule-based, with a confidence score) |
+| Read | `.txt`, text-layer **PDF** and **DOCX** (tables included), with page/line source evidence |
+| Detect | Decides whether an attachment is an **SI, BL, Invoice or Unknown from its title**, never its filename; corrects swapped uploads |
+| Extract and normalise | Seven fields (shipper, consignee, notify party, ports, container count, gross weight in kg) with label aliases and unit/number normalisation |
+| Compare | SI vs BL side by side, with a plain-language reason per mismatch |
+| Human review | Low confidence, missing or unreadable input goes to a queue; a reviewer confirms or corrects, and the result is recalculated with the original kept |
+| Reliability | Task trail (Received → Processing → Completed / Review / Failed), per-case error history and retry |
+| Versions | Detects **repeated emails and document revisions**, tracks the latest version per shipment and shows what changed |
+| Reports | Search and filters, statistics dashboard, JSON / CSV / PDF export, validated submission file |
+| Optional AI | **Gemini** second-opinion risk summary on each comparison (opt-in) |
+| Optional cloud | **Firebase Firestore** audit records for batch runs; deployable to Streamlit Community Cloud |
+| Extras | Simulated incoming email flow and editable reply drafts (nothing is sent) |
 
-1. `shipper`
-2. `consignee`
-3. `notify_party`
-4. `port_of_loading`
-5. `port_of_discharge`
-6. `container_count`
-7. `gross_weight_kg`
+The scored comparison is deterministic and explainable. Gemini only adds a second opinion and never overrides it.
 
-The parser uses a fixed alias table for labels such as `Load Port`, `POL`, and
-`Port of Loading`. Normalization is limited to whitespace, letter case,
-Unicode, container count, and KG number formatting. It does not use fuzzy
-matching.
+## Results on the participant dataset (520 emails)
 
-## Run
+Run with AI and Firebase off:
 
-### Web interface
+- Categories: 220 document checks · 125 SI requests · 75 invoice queries · 60 general · 40 spam.
+- Of the 220 document checks, **94 were compared automatically** (57 no mismatch, 37 mismatch) and 126 went to human review:
+  96 missing attachment, 15 XLSX (not yet supported), 5 wrong document type, 5 unreadable (3 scanned, 2 corrupt), 5 missing value.
+- Duplicate and version tracking: 15 repeated emails, 108 shipments tracked, 0 revisions (the dataset contains none; use the demo bundle below).
+- No accuracy score is claimed: the official scoring endpoint was not available to us, and we did not use any answer key.
+
+## Architecture
+
+```
+email JSON ─► classify ─► read attachments (txt / pdf / docx) ─► detect document type ─► extract 7 fields
+   ─► normalise ─► compare ─► confidence & review rules ─► version/duplicate annotation ─► results
+                                                                    │
+                                     Streamlit UI · exports · (optional) Gemini · (optional) Firestore
+```
+
+Readers are plugged in through `TEXT_READERS` in `web-app/src/extract.py`; adding a format means registering one function.
+
+## Quick start
+
+Requires Python 3.10+ (3.12 recommended).
 
 ```bash
-cd web-app
+git clone <this-repo-url> && cd <repo>
 python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install -r requirements.txt
-streamlit run app.py
+source .venv/bin/activate            # Windows: .venv\Scripts\activate
+python -m pip install -r requirements.txt
+python -m streamlit run web-app/app.py
 ```
 
-Open `http://localhost:8501`. The interface includes inbox analysis, recorded
-processing errors with retry, a human review dashboard, comparison results,
-and JSON/CSV/PDF exports.
+Open http://localhost:8501. The participant dataset ships in `local-data/participant-bundle`, so **Inbox operations →
+Analyze inbox** works immediately, with no keys. In that page's **Data source** menu, choose
+*Version-tracking demo* to see repeats, revisions and change tables (synthetic emails built from real documents).
 
-### Command line
+Command line, with no UI: `python web-app/run.py` writes `output/submission.json`, `results.json` and `summary.json`.
 
-Python 3.10 or newer is sufficient for the command-line pipeline.
+## Configuration (optional AI and cloud)
+
+Copy `web-app/.env.example` to `web-app/.env` and fill it in. Nothing here is required to run the app.
+
+- **Gemini:** create a key in Google AI Studio, set `GEMINI_AI_ENABLED=true` and `GEMINI_API_KEY`.
+  Run `python web-app/scripts/check_gemini.py` to list the model ids your key can use and set `GEMINI_MODEL`.
+- **Firebase:** put the service-account JSON at `web-app/serviceAccountKey.json` (or point `FIREBASE_SERVICE_ACCOUNT` to it).
+  Run `python web-app/scripts/check_firebase.py` to test the connection; add `--write` to write one test record.
+
+`.env` and service-account files are git-ignored. **Never commit keys.**
+
+## Tests
 
 ```bash
 cd web-app
-python3 run.py --bundle /path/to/sdoc-hackathon-bundle
+python -m unittest discover -s tests
 ```
 
-The repository's bundled sample data at `local-data/participant-bundle` is used
-automatically, so the shorter command works after cloning:
+74 tests, no keys or network needed.
 
-```bash
-cd web-app
-python3 run.py
+## Deploy to Streamlit Community Cloud
+
+1. Push this repo to a **public** GitHub repository.
+2. At share.streamlit.io choose **Create app**, select the repo and branch `main`, and set the main file to `web-app/app.py`.
+3. In **Advanced settings → Secrets** paste the following (all optional; omit what you do not use):
+
+```toml
+GEMINI_AI_ENABLED = "true"
+GEMINI_API_KEY = "your-key"
+GEMINI_MODEL = "a-model-id-from-check_gemini"
+FIREBASE_ENABLED = "true"
+# Paste the service-account JSON as-is, or its base64 (base64 -i serviceAccountKey.json | tr -d '\n')
+FIREBASE_SERVICE_ACCOUNT_JSON = '''{ ...service account json... }'''
 ```
 
-The command writes:
+The app reads secrets through the same settings as `.env`, so no code changes are needed.
 
-- `output/submission.json`: the official submission shape;
-- `output/results.json`: extracted values, mismatch evidence, and manual-review details;
-- `output/summary.json`: run counts.
-- `output/errors.json`: processing error and retry history;
-- `output/review_decisions.json`: saved human review decisions.
+## Repository layout
 
-Generated output and hackathon datasets are excluded from Git. If an official
-local evaluation server is already running, submit through its public endpoint:
-
-```bash
-python3 run.py --bundle /path/to/sdoc-hackathon-bundle \
-  --submit-url http://localhost:8080
+```
+web-app/            the application
+  app.py            Streamlit UI
+  src/              pipeline: classify, readers, doctype, extract, normalize, compare, versions, reporting
+  tests/            unit and workflow tests
+  demo/             version-tracking demo bundle (regenerate with tools/make_version_demo.py)
+  scripts/          manual checks for Gemini and Firebase
+local-data/participant-bundle/   the participant dataset (emails and attachments)
+sample-upload/      files for the single-request demo
 ```
 
-The application reads only `local-data/participant-bundle`. It does not read
-organizer evaluation files or a private answer key.
+## Limitations and next steps
+
+- **XLSX** attachments (15 emails) are not read yet; they go to human review with an explicit reason.
+- **Scanned PDFs** need OCR or a vision model; today they are routed to human review.
+- Classification uses the subject and rules; reading the email body with an LLM would handle misleading subjects.
+- Party names are compared after normalisation; address-only differences are not yet treated as a warning.
+- The mailbox is simulated; a real inbox connector is future work.

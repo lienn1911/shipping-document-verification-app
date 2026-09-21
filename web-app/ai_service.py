@@ -29,13 +29,13 @@ def failure_result(exc: Exception) -> dict[str, Any]:
     return {"enabled": True, "status": "unavailable", "error": message, "retryable": True}
 
 
-def _load_local_env() -> None:
-    try:
-        from dotenv import load_dotenv
+DEFAULT_MODEL = "gemini-3.6-flash"  # override with GEMINI_MODEL; run scripts/check_gemini.py to list valid ids
 
-        load_dotenv(Path(__file__).with_name(".env"))
-    except ImportError:
-        pass
+
+def _load_local_env() -> None:
+    from env_loader import load_environment
+
+    load_environment()
 
 
 def integration_status() -> dict[str, Any]:
@@ -45,7 +45,7 @@ def integration_status() -> dict[str, Any]:
     return {
         "enabled": enabled,
         "configured": has_key,
-        "model": os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
+        "model": os.getenv("GEMINI_MODEL", "").strip() or DEFAULT_MODEL,
         "status": "ready" if enabled and has_key else "disabled" if not enabled else "missing_api_key",
     }
 
