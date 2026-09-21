@@ -176,11 +176,15 @@ class ScannedPdfTests(ScanStubMixin, unittest.TestCase):
         self.assertEqual((ctx.exception.review_reason, ctx.exception.internal_reason), ("unreadable", "document_read_failed"))
         self.assertIn("Gemini vision", ctx.exception.detail)
 
-    def test_end_to_end_the_scanned_pair_is_compared_and_tagged(self):
+    def test_end_to_end_a_scan_is_read_prefilled_and_escalated_for_confirmation(self):
         with self.stub():
             artifacts = process_dataset(BUNDLE)
         result, detail = artifacts.submission["email_512"], artifacts.internal_results["email_512"]
-        self.assertEqual((result["status"], result["defect_fields"]), ("OK", []))
+        # The reading is a model transcription, so a person confirms it: escalated as "unreadable" with the values prefilled.
+        self.assertEqual((result["status"], result["review_reason"], result["defect_fields"]), ("NEEDS_REVIEW", "unreadable", []))
+        self.assertEqual(detail["internal_reason"], "ai_read_needs_confirmation")
+        self.assertEqual(detail["extracted"]["si"]["container_count"], "6 x 40'HC")
+        self.assertIn("Preview of the comparison: No mismatch detected", detail["detail"])
         tags = {item.get("read_method") for role in detail["evidence"].values() for item in role.values()}
         self.assertEqual(tags, {"gemini_vision"})
         confidences = {item["confidence"] for role in detail["evidence"].values() for item in role.values()}
@@ -231,24 +235,38 @@ class PunctuationLeniencyTests(unittest.TestCase):
 @unittest.skipUnless((BUNDLE / "attachments" / "email_512_SI.pdf").is_file(), "participant bundle not present")
 class ScanPunctuationEndToEndTests(ScanStubMixin, unittest.TestCase):
 
-    def test_a_dropped_period_in_a_scan_is_not_reported_as_a_defect(self):
+    def test_a_dropped_period_in_a_scan_is_not_previewed_as_a_defect(self):
         bl = GOOD.replace("SHIPPING INSTRUCTION", "BILL OF LADING (DRAFT)").replace("STATIONERY LLC", "STATIONERY L.L.C.")
         with self.stub({hashlib.sha256(self.BL.read_bytes()).hexdigest(): bl}):
             artifacts = process_dataset(BUNDLE)
-        result, detail = artifacts.submission["email_512"], artifacts.internal_results["email_512"]
-        self.assertEqual((result["status"], result["defect_fields"]), ("OK", []))
-        self.assertEqual(sorted(detail["ignored_punctuation"]), ["consignee", "notify_party"])
+        detail = artifacts.internal_results["email_512"]
+        self.assertEqual(artifacts.submission["email_512"]["status"], "NEEDS_REVIEW")  # a person confirms every scan
+        self.assertIn("No mismatch detected", detail["detail"])
+        self.assertIn("Punctuation-only differences ignored: consignee, notify_party", detail["detail"])
 
     def test_a_real_difference_in_a_scan_is_still_a_defect(self):
         bl = GOOD.replace("SHIPPING INSTRUCTION", "BILL OF LADING (DRAFT)").replace("TUTICORIN, INDIA", "MUMBAI, INDIA")
         with self.stub({hashlib.sha256(self.BL.read_bytes()).hexdigest(): bl}):
             artifacts = process_dataset(BUNDLE)
-        self.assertEqual(artifacts.submission["email_512"]["defect_fields"], ["port_of_discharge"])
+        self.assertIn("Fields: port_of_discharge", artifacts.internal_results["email_512"]["detail"])
 
     def test_text_layer_documents_are_unaffected(self):
         artifacts = process_dataset(BUNDLE)  # vision off: nothing is lenient anywhere
         lenient = [k for k, d in artifacts.internal_results.items() if d.get("ignored_punctuation")]
         self.assertEqual(lenient, [])
+
+    def test_a_person_can_confirm_a_scan_and_it_becomes_a_normal_result(self):
+        from src.service import apply_human_review
+
+        with self.stub():
+            artifacts = process_dataset(BUNDLE)
+        extracted = artifacts.internal_results["email_512"]["extracted"]
+        updated = apply_human_review(artifacts, "email_512", extracted["si"], extracted["bl"], "checked against the scan")
+        self.assertEqual(updated.submission["email_512"]["status"], "OK")
+        self.assertEqual(updated.internal_results["email_512"]["human_review"]["note"], "checked against the scan")
+        wrong = {**extracted["bl"], "gross_weight_kg": "999 KG"}
+        corrected = apply_human_review(artifacts, "email_512", extracted["si"], wrong, "weight differs on the scan")
+        self.assertEqual(corrected.submission["email_512"]["defect_fields"], ["gross_weight_kg"])
 
 
 class CooldownTests(FakeGeminiMixin, unittest.TestCase):
