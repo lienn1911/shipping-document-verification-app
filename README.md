@@ -2,6 +2,8 @@
 
 **Team FiveMinds · Averis x Monash Hackathon 2026**
 
+**Live demo:** https://shipping-document-verification-app-soof5bsxirg5aksfwtffcw.streamlit.app/ (Streamlit Community Cloud, deployed from a synced copy of this repository; if it has gone to sleep, click the wake-up button and wait a moment).
+
 Shipping teams compare a Shipping Instruction (SI) with a draft Bill of Lading (BL) by hand, and a missed
 discrepancy means corrections and delays. CargoCheck reads an inbox, finds the document-check requests,
 compares the seven shipment fields, and explains every mismatch with the source line it came from. When it
@@ -57,7 +59,7 @@ Readers are plugged in through `TEXT_READERS` in `web-app/src/extract.py`; addin
 Requires Python 3.10+ (3.12 recommended).
 
 ```bash
-git clone <this-repo-url> && cd <repo>
+git clone https://github.com/lienn1911/shipping-document-verification-app.git && cd shipping-document-verification-app
 python3 -m venv .venv
 source .venv/bin/activate            # Windows: .venv\Scripts\activate
 python -m pip install -r requirements.txt
