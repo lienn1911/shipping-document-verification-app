@@ -109,10 +109,13 @@ def identify_attachments(paths: list[str]) -> dict[str, str]:
 # Suffix -> function turning raw bytes into text, used for document type detection.
 # When PDF / DOCX / XLSX (or OCR) parsing is added, register a reader here and
 # content-based type detection works for that format automatically.
+RICH_SUFFIXES = {".pdf", ".docx", ".xlsx"}  # formats read through document_readers.read_document
+
 TEXT_READERS: dict[str, Callable[[bytes], str]] = {
     ".txt": lambda raw: raw.decode("utf-8", errors="replace"),
     ".pdf": lambda raw: document_text(raw, "attachment.pdf"),
     ".docx": lambda raw: document_text(raw, "attachment.docx"),
+    ".xlsx": lambda raw: document_text(raw, "attachment.xlsx"),
 }
 
 
@@ -156,7 +159,7 @@ def _looks_missing(value: str) -> bool:
 
 
 def _validate_document_type(text: str, role: str, path: str) -> None:
-    if Path(path).suffix.lower() in {".pdf", ".docx"}:
+    if Path(path).suffix.lower() in RICH_SUFFIXES:
         from .doctype import detect_document_type
         detected = detect_document_type(text, path)
         if detected.type == role and detected.trusted:
@@ -237,7 +240,7 @@ def parse_fields(text: str, role: str, path: str) -> dict[str, str]:
 
 def extract_attachment(inbox: Any, path: str, role: str) -> dict[str, str]:
     """Read and parse one supported plain-text attachment."""
-    if Path(path).suffix.casefold() in {".pdf", ".docx"}:
+    if Path(path).suffix.casefold() in RICH_SUFFIXES:
         return extract_rich_attachment(inbox, path, role)[0]
     if Path(path).suffix.casefold() != ".txt":
         raise ReviewRequired(
@@ -270,7 +273,7 @@ def extract_attachment_with_evidence(
     inbox: Any, path: str, role: str
 ) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
     """Read one attachment and return extracted values with source locations."""
-    if Path(path).suffix.casefold() in {".pdf", ".docx"}:
+    if Path(path).suffix.casefold() in RICH_SUFFIXES:
         return extract_rich_attachment(inbox, path, role)
     if Path(path).suffix.casefold() != ".txt":
         raise ReviewRequired(
