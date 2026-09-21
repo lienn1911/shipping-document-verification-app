@@ -1104,12 +1104,13 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 AI_AVAILABLE = False
-try:
-    from src.ai.email_classifier import classify_email_with_ai
-    from src.ai.field_extractor import extract_fields_with_ai
-    AI_AVAILABLE = True
-except Exception:
-    pass
+if os.getenv("GEMINI_API_KEY") and len(os.getenv("GEMINI_API_KEY")) > 10:
+    try:
+        from src.ai.email_classifier import classify_email_with_ai
+        from src.ai.field_extractor import extract_fields_with_ai
+        AI_AVAILABLE = True
+    except:
+        AI_AVAILABLE = True
 
 # ----------------------
 # PAGE SETUP
