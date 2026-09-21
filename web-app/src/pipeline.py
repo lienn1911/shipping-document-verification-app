@@ -61,7 +61,7 @@ DEFAULT_RESULT = {
 
 
 def _process_comparison(
-    inbox: Any, email: dict[str, Any], stage_callback: StageCallback | None = None
+    inbox: Any, email: dict[str, Any], stage_callback: StageCallback | None = None, run_ai: bool = True
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     paths: dict[str, str] | None = None
     extracted: dict[str, dict[str, str]] = {}
@@ -152,11 +152,15 @@ def _process_comparison(
         "defect_fields": defect_fields,
         "has_defect": bool(defect_fields),
     }
-    if stage_callback:
-        stage_callback(email["email_id"], "Gemini cross-check · checking availability")
-    ai_analysis = _ai_cross_check(extracted)
-    if stage_callback:
-        stage_callback(email["email_id"], f"Gemini cross-check · {ai_analysis.get('status', 'unknown')}")
+    if run_ai:
+        if stage_callback:
+            stage_callback(email["email_id"], "Gemini cross-check · checking availability")
+        ai_analysis = _ai_cross_check(extracted)
+        if stage_callback:
+            stage_callback(email["email_id"], f"Gemini cross-check · {ai_analysis.get('status', 'unknown')}")
+    else:
+        # Batch runs do not call Gemini: it would send every case to Google and exhaust the quota.
+        ai_analysis = {"enabled": True, "status": "skipped", "reason": "batch"}
     detail = {
         **comparison,
         "review_reason": None,
@@ -215,7 +219,7 @@ def summarize_results(
 
 
 def process_inbox(
-    inbox: Any, stage_callback: StageCallback | None = None
+    inbox: Any, stage_callback: StageCallback | None = None, run_ai: bool = True
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     submission: dict[str, Any] = {}
     internal_results: dict[str, Any] = {}
@@ -228,7 +232,7 @@ def process_inbox(
         if category == BL_COMPARISON:
             if stage_callback:
                 stage_callback(email_id, "Reading SI and draft BL")
-            outcome, detail = _process_comparison(inbox, email, stage_callback)
+            outcome, detail = _process_comparison(inbox, email, stage_callback, run_ai)
         else:
             outcome = dict(DEFAULT_RESULT)
             detail = {

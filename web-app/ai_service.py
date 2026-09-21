@@ -77,6 +77,12 @@ def _load_local_env() -> None:
     load_environment()
 
 
+def batch_ai_enabled() -> bool:
+    """Whether a full-dataset run should call Gemini for every case (default: no, use the per-case button)."""
+    _load_local_env()
+    return os.getenv("GEMINI_BATCH_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def integration_status() -> dict[str, Any]:
     _load_local_env()
     enabled = os.getenv("GEMINI_AI_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
