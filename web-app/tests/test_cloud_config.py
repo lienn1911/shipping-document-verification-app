@@ -43,6 +43,7 @@ class FirebaseCredentialTests(unittest.TestCase):
     def connect(self, env: dict):
         base = {"FIREBASE_ENABLED": "true", "FIREBASE_SERVICE_ACCOUNT": str(WEB_APP / "does-not-exist.json")}
         with mock.patch.dict(os.environ, {**base, **env}), \
+             mock.patch("env_loader.load_environment"), \
              mock.patch("firebase_admin._apps", {}), \
              mock.patch("firebase_admin.initialize_app") as init, \
              mock.patch("firebase_admin.firestore.client", return_value="CLIENT"):
@@ -113,10 +114,11 @@ class EnvLoaderTests(unittest.TestCase):
         secrets = {"GEMINI_API_KEY": "from-secrets", "GEMINI_MODEL": "secret-model"}
         with mock.patch.dict(os.environ, {"GEMINI_MODEL": "from-env"}, clear=False):
             os.environ.pop("GEMINI_API_KEY", None)
-            with mock.patch.object(streamlit, "secrets", secrets):
+            with mock.patch.object(streamlit, "secrets", secrets), mock.patch("dotenv.load_dotenv"):
                 env_loader.load_environment()
-            self.assertEqual(os.environ["GEMINI_API_KEY"], "from-secrets")
-            self.assertEqual(os.environ["GEMINI_MODEL"], "from-env")
+            # assertTrue on a comparison: a failure must not print real values from a developer's environment
+            self.assertTrue(os.environ["GEMINI_API_KEY"] == "from-secrets")
+            self.assertTrue(os.environ["GEMINI_MODEL"] == "from-env")
             os.environ.pop("GEMINI_API_KEY", None)
 
     def test_missing_secrets_file_is_not_an_error(self):

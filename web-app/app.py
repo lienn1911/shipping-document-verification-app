@@ -380,6 +380,10 @@ def render_ai_panel(detail: dict[str, Any]) -> None:
             st.info(result.get("summary", "Analysis completed"))
             for observation in result.get("observations", []):
                 st.write(f"• {observation}")
+            risk = str(result.get("risk_level", "")).strip().title()
+            model = ai.get("model")
+            backup = " (backup model: the main model was busy)" if ai.get("fallback_used") else ""
+            st.caption(" · ".join(part for part in (f"Risk level: {risk}" if risk else "", f"Model: {model}{backup}" if model else "") if part))
         elif ai.get("status") in {"unavailable", "quota_exhausted"}:
             from ai_service import failure_result
             error = ai.get("error", "")
