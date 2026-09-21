@@ -23,8 +23,13 @@ def _load_local_env() -> None:
 
 
 def _credential_path() -> Path:
+    """Service-account file. A relative path is resolved next to this module (web-app/), never
+    against whichever folder the app happened to be started from."""
     configured = os.getenv("FIREBASE_SERVICE_ACCOUNT", "").strip()
-    return Path(configured).expanduser() if configured else Path(__file__).with_name("serviceAccountKey.json")
+    if not configured:
+        return Path(__file__).resolve().parent / "serviceAccountKey.json"
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else Path(__file__).resolve().parent / path
 
 
 def _inline_credentials() -> dict[str, Any] | None:

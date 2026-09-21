@@ -85,6 +85,27 @@ class FirebaseCredentialTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"FIREBASE_SERVICE_ACCOUNT_JSON": json.dumps(self.account)}):
             self.assertTrue(firebase_config.integration_status()["configured"])
 
+    def test_relative_credential_path_does_not_depend_on_the_working_directory(self):
+        import tempfile
+
+        expected = WEB_APP / "serviceAccountKey.json"
+        previous = os.getcwd()
+        try:
+            with tempfile.TemporaryDirectory() as elsewhere, \
+                 mock.patch.dict(os.environ, {"FIREBASE_SERVICE_ACCOUNT": "serviceAccountKey.json"}):
+                os.chdir(elsewhere)
+                self.assertEqual(firebase_config._credential_path(), expected)
+            with mock.patch.dict(os.environ, {"FIREBASE_SERVICE_ACCOUNT": ""}):
+                self.assertEqual(firebase_config._credential_path(), expected)
+        finally:
+            os.chdir(previous)
+
+    def test_absolute_and_home_paths_are_left_alone(self):
+        with mock.patch.dict(os.environ, {"FIREBASE_SERVICE_ACCOUNT": "/opt/keys/sa.json"}):
+            self.assertEqual(firebase_config._credential_path(), Path("/opt/keys/sa.json"))
+        with mock.patch.dict(os.environ, {"FIREBASE_SERVICE_ACCOUNT": "~/sa.json"}):
+            self.assertEqual(firebase_config._credential_path(), Path("~/sa.json").expanduser())
+
     def test_generated_account_is_accepted_by_the_real_parser(self):
         from firebase_admin import credentials
 
