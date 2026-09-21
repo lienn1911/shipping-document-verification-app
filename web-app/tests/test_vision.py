@@ -203,10 +203,6 @@ class ScannedPdfTests(ScanStubMixin, unittest.TestCase):
         self.assertEqual((result["status"], result["review_reason"]), ("NEEDS_REVIEW", "missing_value"))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class PunctuationLeniencyTests(unittest.TestCase):
     SI = {"shipper": "ACME LTD", "consignee": "KPP-ANTALIS (SINGAPORE) PTE LTD", "notify_party": "X", "port_of_loading": "NANTONG, CHINA",
           "port_of_discharge": "GDANSK, POLAND", "container_count": "1 x 20'FCL", "gross_weight_kg": "22,825 KG"}
@@ -352,3 +348,122 @@ class PrewarmTests(ScanStubMixin, unittest.TestCase):
 
         with mock.patch.multiple(ai_service, vision_enabled=mock.Mock(return_value=True), transcribe_scanned_pdf=fail):
             self.assertEqual(prewarm_vision(self.Inbox(), self.emails()), 6)  # attempted, all failed, no exception
+
+
+class TransientPauseTests(FakeGeminiMixin, unittest.TestCase):
+    def test_a_short_overload_pause_can_be_lifted_for_a_retry(self):
+        FakeClient.plan = {"main-model": OVERLOAD, "backup-a": OVERLOAD}
+        with self.assertRaises(RuntimeError):
+            ai_service.transcribe_scanned_pdf(b"doc-1")
+        self.assertTrue(ai_service.clear_transient_pause())
+        FakeClient.plan, FakeClient.calls = {}, []
+        self.assertEqual(ai_service.transcribe_scanned_pdf(b"doc-1")["model"], "main-model")
+        self.assertEqual(FakeClient.calls, ["main-model"])
+
+    def test_a_quota_or_credentials_pause_is_never_lifted(self):
+        FakeClient.plan = {"main-model": DENIED}
+        with self.assertRaises(RuntimeError):
+            ai_service.transcribe_scanned_pdf(b"doc-2")
+        self.assertFalse(ai_service.clear_transient_pause())
+        FakeClient.calls.clear()
+        with self.assertRaises(RuntimeError):
+            ai_service.transcribe_scanned_pdf(b"doc-3")
+        self.assertEqual(FakeClient.calls, [])
+
+    def test_with_no_pause_active_a_retry_is_allowed(self):
+        self.assertTrue(ai_service.clear_transient_pause())
+
+
+@unittest.skipUnless((BUNDLE / "attachments" / "email_512_SI.pdf").is_file(), "participant bundle not present")
+class PrewarmRetryTests(ScanStubMixin, unittest.TestCase):
+    Inbox = PrewarmTests.Inbox
+    emails = PrewarmTests.emails
+
+    def run_prewarm(self, transcribe, **kwargs):
+        from src.service import prewarm_vision
+
+        with mock.patch.multiple(ai_service, vision_enabled=mock.Mock(return_value=True), transcribe_scanned_pdf=transcribe):
+            return prewarm_vision(self.Inbox(), self.emails(), retry_pause=0, **kwargs)
+
+    def test_at_most_two_scans_are_read_at_a_time(self):
+        import threading
+        import time
+
+        active, peak, lock = [0], [0], threading.Lock()
+
+        def slow(raw):
+            with lock:
+                active[0] += 1
+                peak[0] = max(peak[0], active[0])
+            time.sleep(0.05)
+            with lock:
+                active[0] -= 1
+            return {"text": GOOD, "model": "m"}
+
+        self.assertEqual(self.run_prewarm(slow), 6)
+        self.assertEqual(peak[0], 2)
+
+    def test_scans_that_were_throttled_get_one_calm_second_try(self):
+        seen = {}
+
+        def flaky(raw):
+            key = hashlib.sha256(raw).hexdigest()
+            seen[key] = seen.get(key, 0) + 1
+            if seen[key] == 1:
+                raise RuntimeError("Gemini is temporarily overloaded (high demand).")
+            return {"text": GOOD, "model": "m"}
+
+        self.assertEqual(self.run_prewarm(flaky), 6)
+        self.assertEqual(sorted(seen.values()), [2] * 6)  # every scan: failed once, then read
+
+    def test_a_scan_that_keeps_failing_is_not_hammered(self):
+        calls = []
+
+        def down(raw):
+            calls.append(1)
+            raise RuntimeError("Gemini is temporarily overloaded (high demand).")
+
+        self.run_prewarm(down)
+        self.assertEqual(len(calls), 6 + 1)  # the first pass, then one retry that stops at the first failure
+
+    def test_no_retry_when_the_pause_is_a_quota_or_credentials_one(self):
+        calls = []
+
+        def down(raw):
+            calls.append(1)
+            raise RuntimeError("Gemini rejected the request (credentials or permission problem).")
+
+        with mock.patch.object(ai_service, "clear_transient_pause", return_value=False):
+            self.run_prewarm(down)
+        self.assertEqual(len(calls), 6)
+
+
+@unittest.skipUnless((BUNDLE / "attachments" / "email_512_SI.pdf").is_file(), "participant bundle not present")
+class ReviewPageReasonTests(unittest.TestCase):
+    def test_a_scan_that_could_not_be_read_says_why(self):
+        import firebase_config
+        from streamlit.testing.v1 import AppTest
+
+        def overloaded(raw):
+            raise RuntimeError("Gemini is temporarily overloaded (high demand). The local result is unaffected; retry in a minute.")
+
+        original = firebase_config.db
+        firebase_config.db = None
+        self.addCleanup(setattr, firebase_config, "db", original)
+        with mock.patch.multiple(ai_service, vision_enabled=mock.Mock(return_value=True), transcribe_scanned_pdf=overloaded), \
+             mock.patch("src.service.prewarm_vision", lambda *a, **k: 0):
+            at = AppTest.from_file(str(WEB_APP / "app.py"), default_timeout=300).run()
+            [b for b in at.sidebar.button if b.label == "Inbox & work queue"][0].click()
+            at.run()
+            [b for b in at.button if "Analyze inbox" in b.label][0].click()
+            at.run()
+            [b for b in at.sidebar.button if b.label == "Review & resolution"][0].click()
+            at.run()
+            case = at.selectbox[0]
+            case.select([o for o in case.options if "email_512" in str(o)][0]).run()
+        self.assertEqual(len(at.exception), 0)
+        self.assertTrue(any("Why this needs review" in i.value and "overloaded" in i.value for i in at.info))
+
+
+if __name__ == "__main__":
+    unittest.main()

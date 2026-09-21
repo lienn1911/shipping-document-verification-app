@@ -88,6 +88,9 @@ _vision_cache: dict[str, dict[str, Any]] = {}
 _vision_failures: dict[str, tuple[float, str]] = {}
 _vision_cooldown: list = [0.0, ""]  # [until, message]: a service-level failure pauses vision for every document
 _SERVICE_LEVEL_OUTCOMES = {"overloaded", "rate_limit", "daily_quota", "credentials", "error"}
+_TRANSIENT_OUTCOMES = {"overloaded", "rate_limit", "error"}  # worth retrying in a few seconds; quota and credentials are not
+_vision_cooldown_transient = [False]
+_vision_failures_transient: set[str] = set()
 
 VISION_PROMPT = (
     "This is a scanned shipping document (a Shipping Instruction or a draft Bill of Lading). "
@@ -158,11 +161,29 @@ def transcribe_scanned_pdf(raw: bytes) -> dict[str, Any]:
                 break
     failure = failure_result(last_error)
     outcome = _outcome(last_error)
-    pause = 3600 if outcome == "daily_quota" else 300 if outcome == "credentials" else 60
+    transient = outcome in _TRANSIENT_OUTCOMES
+    pause = 3600 if outcome == "daily_quota" else 300 if outcome == "credentials" else 20
     _vision_failures[doc_key] = (time.monotonic() + pause, failure["error"])
+    (_vision_failures_transient.add if transient else _vision_failures_transient.discard)(doc_key)
     if outcome in _SERVICE_LEVEL_OUTCOMES:
         _vision_cooldown[0], _vision_cooldown[1] = time.monotonic() + pause, failure["error"]
+        _vision_cooldown_transient[0] = transient
     raise RuntimeError(failure["error"])
+
+
+def clear_transient_pause() -> bool:
+    """Lift a short pause caused by overload or throttling, so scans that failed for that reason can be retried.
+
+    Returns False when a pause that will not go away in seconds (daily quota, bad credentials) is active: retrying is pointless.
+    """
+    if time.monotonic() < _vision_cooldown[0]:
+        if not _vision_cooldown_transient[0]:
+            return False
+        _vision_cooldown[0] = 0.0
+    for doc_key in list(_vision_failures_transient):
+        _vision_failures.pop(doc_key, None)
+    _vision_failures_transient.clear()
+    return True
 
 
 def batch_ai_enabled() -> bool:

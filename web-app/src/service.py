@@ -17,7 +17,7 @@ from .pipeline import process_inbox, summarize_results, validate_submission
 from .versions import annotate_versions, refresh_changes
 
 
-def prewarm_vision(inbox: Any, emails: list[dict[str, Any]], workers: int = 6) -> int:
+def prewarm_vision(inbox: Any, emails: list[dict[str, Any]], workers: int = 2, retry_pause: float = 4.0) -> int:
     """Read every scanned PDF with Gemini vision concurrently, so the sequential pipeline finds them cached.
 
     Returns how many scans were sent. Failures are ignored here: they are remembered, and the pipeline reports
@@ -52,14 +52,26 @@ def prewarm_vision(inbox: Any, emails: list[dict[str, Any]], workers: int = 6) -
     if not scans:
         return 0
 
+    failed: list[bytes] = []
+
     def read(raw: bytes) -> None:
         try:
             ai_service.transcribe_scanned_pdf(raw)
         except RuntimeError:
-            pass
+            failed.append(raw)
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
+    with ThreadPoolExecutor(max_workers=workers) as pool:  # two at a time: a burst of requests can be throttled
         list(pool.map(read, scans.values()))
+    if failed and ai_service.clear_transient_pause():
+        # One calm second pass, one scan at a time, for anything that was throttled or overloaded.
+        import time
+
+        time.sleep(retry_pause)
+        for raw in failed:
+            try:
+                ai_service.transcribe_scanned_pdf(raw)
+            except RuntimeError:
+                break  # still failing: stop; the pipeline reports each case with the reason
     return len(scans)
 
 
