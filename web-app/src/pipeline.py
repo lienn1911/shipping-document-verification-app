@@ -84,7 +84,10 @@ def _process_comparison(
             )
         if stage_callback:
             stage_callback(email["email_id"], "Comparing seven shipment fields")
-        comparison = compare_documents(extracted["si"], extracted["bl"])
+        vision_read = any(
+            item.get("read_method") == "gemini_vision" for role_evidence in evidence.values() for item in role_evidence.values()
+        )
+        comparison = compare_documents(extracted["si"], extracted["bl"], ignore_punctuation=vision_read)
     except ReviewRequired as exc:
         document_analysis = exc.document_analysis or document_analysis
         submission = {

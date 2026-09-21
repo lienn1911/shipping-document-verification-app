@@ -58,9 +58,40 @@ def _read_xlsx(raw: bytes):
 
 
 def read_document(raw: bytes, path: str):
+    """Rows of (text, page, line). See read_document_ex for how the document was read."""
+    return read_document_ex(raw, path)[0]
+
+
+def _transcription_rows(text: str):
+    """Rows from a Gemini transcription. "[illegible]" becomes "???" so the normal missing-value rules apply."""
+    rows, page, number = [], 1, 0
+    for line in text.splitlines():
+        marker = re.fullmatch(r"\s*=+\s*PAGE\s+(\d+)\s*=+\s*", line, re.I)
+        if marker:
+            page, number = int(marker.group(1)), 0
+            continue
+        line = re.sub(r"\[\s*illegible\s*\]", "???", line.strip(), flags=re.I)
+        if line and not line.startswith("```"):
+            number += 1
+            rows.append((line, page, number))
+    return rows
+
+
+def _vision_module():
+    """The Gemini service when scanned pages can be read with it; otherwise the same error as before."""
+    import ai_service
+
+    if not ai_service.vision_enabled():
+        raise ValueError("PDF has no readable text layer; scanned pages require OCR/manual review")
+    return ai_service
+
+
+def read_document_ex(raw: bytes, path: str):
+    """Return (rows, meta). meta["method"] is "text_layer", or "gemini_vision" for a scanned PDF."""
+    meta = {"method": "text_layer"}
     suffix = Path(path).suffix.lower()
     if suffix == ".txt":
-        return [(line, 1, n) for n, line in enumerate(raw.decode("utf-8").splitlines(), 1)]
+        return [(line, 1, n) for n, line in enumerate(raw.decode("utf-8").splitlines(), 1)], meta
     if suffix == ".pdf":
         from pypdf import PdfReader
         reader = PdfReader(BytesIO(raw))
@@ -68,13 +99,26 @@ def read_document(raw: bytes, path: str):
             raise ValueError("Encrypted PDF; provide an unlocked copy")
         if len(reader.pages) > 100:
             raise ValueError("PDF exceeds the 100-page reading limit")
-        rows = []
+        rows, blank_pages = [], []
         for page_no, page in enumerate(reader.pages, 1):
             text = page.extract_text() or ""
             if not text.strip():
-                raise ValueError(f"PDF page {page_no} has no readable text layer; scanned pages require OCR/manual review")
+                blank_pages.append(page_no)
+                continue
             rows.extend((line, page_no, n) for n, line in enumerate(text.splitlines(), 1))
-        return rows
+        if blank_pages and rows:
+            raise ValueError(f"PDF page {blank_pages[0]} has no readable text layer; scanned pages require OCR/manual review")
+        if blank_pages:  # the whole document is a scan
+            ai_service = _vision_module()
+            try:
+                result = ai_service.transcribe_scanned_pdf(raw)
+            except RuntimeError as exc:
+                raise ValueError(f"Scanned PDF could not be read by Gemini vision: {exc}") from exc
+            rows = _transcription_rows(result["text"])
+            if not rows:
+                raise ValueError("Gemini vision returned no readable lines for the scanned PDF")
+            return rows, {"method": "gemini_vision", "model": result["model"], "pages": len(blank_pages)}
+        return rows, meta
     if suffix == ".docx":
         from docx import Document
         from docx.table import Table
@@ -90,9 +134,9 @@ def read_document(raw: bytes, path: str):
                 rows.extend((line, None, len(rows) + n) for n, line in enumerate(block.text.splitlines(), 1))
         if not any(line.strip() for line, _, _ in rows):
             raise ValueError("Word document contains no readable paragraphs or tables")
-        return rows
+        return rows, meta
     if suffix == ".xlsx":
-        return _read_xlsx(raw)
+        return _read_xlsx(raw), meta
     raise ValueError(f"Unsupported document format: {suffix}")
 
 

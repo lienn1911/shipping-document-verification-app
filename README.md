@@ -12,7 +12,7 @@ cannot decide, it escalates to a person with the evidence instead of guessing.
 | Area | Capability |
 |---|---|
 | Classify | Sorts emails into BL check, SI request, invoice query, general and spam (rule-based, with a confidence score) |
-| Read | `.txt`, text-layer **PDF**, **DOCX** (tables included) and **XLSX**, with page/sheet and line source evidence |
+| Read | `.txt`, text-layer **PDF**, **DOCX** (tables included) and **XLSX**, with page/sheet and line source evidence. **Scanned PDFs** are read with Gemini vision when Gemini is configured (shown with a warning and lower confidence); otherwise they go to human review |
 | Detect | Decides whether an attachment is an **SI, BL, Invoice or Unknown from its title**, never its filename; corrects swapped uploads |
 | Extract and normalise | Seven fields (shipper, consignee, notify party, ports, container count, gross weight in kg) with label aliases and unit/number normalisation |
 | Compare | SI vs BL side by side, with a plain-language reason per mismatch |
@@ -20,11 +20,11 @@ cannot decide, it escalates to a person with the evidence instead of guessing.
 | Reliability | Task trail (Received → Processing → Completed / Review / Failed), per-case error history and retry |
 | Versions | Detects **repeated emails and document revisions**, tracks the latest version per shipment and shows what changed |
 | Reports | Search and filters, statistics dashboard, JSON / CSV / PDF export, validated submission file |
-| Optional AI | **Gemini** second-opinion risk summary on each comparison (opt-in) |
-| Optional cloud | **Firebase Firestore** audit records for batch runs; deployable to Streamlit Community Cloud |
+| Optional AI | **Gemini** (opt-in): reads scanned documents (vision) and adds a second-opinion risk summary per case |
+| Optional cloud | **Firebase Firestore** audit records (outcome, extracted values, mismatches, version tracking and every human-review decision; never email bodies or senders); deployable to Streamlit Community Cloud |
 | Extras | Simulated incoming email flow and editable reply drafts (nothing is sent) |
 
-The scored comparison is deterministic and explainable. Gemini only adds a second opinion and never overrides it.
+The scored comparison is deterministic and explainable. Gemini transcribes scans and adds a second opinion; the transcription then goes through the same rules as any other document, and Gemini never overrides a comparison.
 
 ## Results on the participant dataset (520 emails)
 
@@ -35,6 +35,7 @@ Run with AI and Firebase off:
   96 missing attachment, 5 wrong document type, 5 unreadable (3 scanned, 2 corrupt), 5 missing value.
 - We checked every reported mismatch for formatting-only differences (punctuation, spacing, address layout): none was, so the mismatch rate reflects real differences.
 - Duplicate and version tracking: 15 repeated emails, 123 shipments tracked, 0 revisions (the dataset contains none; use the demo bundle below).
+- These numbers are with Gemini off. With Gemini configured, the 3 scanned pairs are read by vision instead of being routed to review (a model transcription, so they carry a verification warning).
 - No accuracy score is claimed: the official scoring endpoint was not available to us, and we did not use any answer key.
 
 ## Architecture
@@ -72,6 +73,7 @@ Copy `web-app/.env.example` to `web-app/.env` and fill it in. Nothing here is re
 
 - **Gemini:** create a key in Google AI Studio, set `GEMINI_AI_ENABLED=true` and `GEMINI_API_KEY`.
   Run `python web-app/scripts/check_gemini.py` to list the model ids your key can use and set `GEMINI_MODEL`.
+  `python web-app/scripts/check_vision.py` tests scanned-PDF reading with your key (about 6 calls); `GEMINI_VISION_ENABLED=false` turns that feature off.
   Gemini runs automatically for single requests and on demand per case (button); full-dataset runs skip it unless `GEMINI_BATCH_ENABLED=true`.
   If the model is overloaded (HTTP 503) the app automatically tries backup models (`GEMINI_FALLBACK_MODELS`; blank = built-in defaults, `none` = off).
 - **Firebase:** put the service-account JSON at `web-app/serviceAccountKey.json` (or point `FIREBASE_SERVICE_ACCOUNT` to it).
@@ -124,7 +126,7 @@ sample-upload/      files for the single-request demo
 
 ## Limitations and next steps
 
-- **Scanned PDFs** need OCR or a vision model; today they are routed to human review.
+- **Scanned PDFs** depend on Gemini (the first full run with Gemini configured reads them in parallel, adding roughly the time of one Gemini call; later runs reuse the result while the app stays up): a model transcription can misread a value, so vision-read documents are flagged, carry lower confidence, and should be verified. Without Gemini (or if it is unavailable) they go to human review with the reason.
 - **XLSX** sheets are read as label/value rows; a bare number in a weight row is taken to be kilograms, because the sheets carry no unit.
 - Classification uses the subject and rules; reading the email body with an LLM would handle misleading subjects.
 - Party names are compared after normalisation; address-only differences are not yet treated as a warning.

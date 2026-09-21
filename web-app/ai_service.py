@@ -77,6 +77,94 @@ def _load_local_env() -> None:
     load_environment()
 
 
+# --------------------------------------------------------------------------- #
+# Gemini vision: reading scanned documents (image-only PDFs)
+# --------------------------------------------------------------------------- #
+
+VISION_MAX_BYTES = 15 * 1024 * 1024
+_VISION_TIMEOUT_MS = 45000  # one attempt; a page or two is quick, so a slow call is a stuck one
+_VISION_MAX_MODELS = 2  # the main model plus one backup: worst case is about a minute and a half, not minutes
+_vision_cache: dict[str, dict[str, Any]] = {}
+_vision_failures: dict[str, tuple[float, str]] = {}
+_vision_cooldown: list = [0.0, ""]  # [until, message]: a service-level failure pauses vision for every document
+_SERVICE_LEVEL_OUTCOMES = {"overloaded", "rate_limit", "daily_quota", "credentials", "error"}
+
+VISION_PROMPT = (
+    "This is a scanned shipping document (a Shipping Instruction or a draft Bill of Lading). "
+    "Transcribe ALL of its text exactly as printed, one printed line per output line. "
+    "Write every labelled field as `Label: value` on one line, keeping the label wording exactly as printed; "
+    "keep multi-line names and addresses on the lines directly below their label. "
+    "Do NOT translate, correct, normalise, summarise or infer anything, and add no commentary. "
+    "If a piece of text cannot be read, write [illegible] in its place. "
+    "Start each page with a line `=== PAGE n ===`."
+)
+
+
+def vision_enabled() -> bool:
+    """Gemini must be ready (opt-in, key present); GEMINI_VISION_ENABLED=false switches only this feature off."""
+    if integration_status()["status"] != "ready":
+        return False
+    return os.getenv("GEMINI_VISION_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def transcribe_scanned_pdf(raw: bytes) -> dict[str, Any]:
+    """Transcribe an image-only PDF with Gemini. Returns {"text", "model"}.
+
+    Raises RuntimeError with a short reason that never contains a key. Successful results are cached by
+    document hash, and a failure is remembered for a minute so one outage is not retried by every reader.
+    """
+    if len(raw) > VISION_MAX_BYTES:
+        raise RuntimeError("The scanned PDF is larger than the 15 MB reading limit")
+    status = integration_status()
+    doc_key = hashlib.sha256(raw + status["model"].encode()).hexdigest()
+    if doc_key in _vision_cache:
+        return {**_vision_cache[doc_key], "cached": True}
+    failed_until, failed_message = _vision_failures.get(doc_key, (0.0, ""))
+    if time.monotonic() < failed_until:
+        raise RuntimeError(failed_message)
+    if time.monotonic() < _vision_cooldown[0]:  # Gemini is down or refusing: do not make every scan wait for it
+        raise RuntimeError(_vision_cooldown[1])
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError as exc:
+        raise RuntimeError("Gemini support is not installed; run pip install -r requirements.txt") from exc
+
+    last_error: Exception | None = None
+    for model in [status["model"], *fallback_models(status["model"])][:_VISION_MAX_MODELS]:
+        try:
+            with genai.Client(
+                api_key=os.environ["GEMINI_API_KEY"],
+                http_options=types.HttpOptions(timeout=_VISION_TIMEOUT_MS, retry_options=types.HttpRetryOptions(attempts=1)),
+            ) as client:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=[types.Part.from_bytes(data=raw, mime_type="application/pdf"), VISION_PROMPT],
+                    config=types.GenerateContentConfig(temperature=0.0),
+                )
+            text = (response.text or "").strip()
+            if text.startswith("```"):
+                text = text.strip("`").split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            if len(text) < 40:
+                raise ValueError("Gemini returned no usable transcription")
+            result = {"text": text, "model": model}
+            if len(_vision_cache) >= 32:
+                _vision_cache.pop(next(iter(_vision_cache)))
+            _vision_cache[doc_key] = result
+            return dict(result)
+        except Exception as exc:
+            last_error = exc
+            if _stops_fallback(exc):
+                break
+    failure = failure_result(last_error)
+    outcome = _outcome(last_error)
+    pause = 3600 if outcome == "daily_quota" else 300 if outcome == "credentials" else 60
+    _vision_failures[doc_key] = (time.monotonic() + pause, failure["error"])
+    if outcome in _SERVICE_LEVEL_OUTCOMES:
+        _vision_cooldown[0], _vision_cooldown[1] = time.monotonic() + pause, failure["error"]
+    raise RuntimeError(failure["error"])
+
+
 def batch_ai_enabled() -> bool:
     """Whether a full-dataset run should call Gemini for every case (default: no, use the per-case button)."""
     _load_local_env()

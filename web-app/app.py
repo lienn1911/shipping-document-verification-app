@@ -173,6 +173,12 @@ def render_evidence(detail: dict[str, Any]) -> None:
         return
     section_label("Source evidence")
     st.caption("Every extracted value remains traceable to its source document and line.")
+    if any(item.get("read_method") == "gemini_vision" for role_items in evidence.values() for item in role_items.values()):
+        ignored = detail.get("ignored_punctuation") or []
+        st.warning(
+            "At least one document was a scan read by Gemini vision. Check its values against the original before relying on them."
+            + (" Treated as equal despite punctuation or spacing differences: " + ", ".join(ignored) + "." if ignored else "")
+        )
     for row in comparison_rows(detail):
         field_key = next((key for key, label in FIELD_LABELS.items() if label == row["Field"]), None)
         if field_key is None:
@@ -186,7 +192,7 @@ def render_evidence(detail: dict[str, Any]) -> None:
                 if item.get("line_end") != item.get("line_start"):
                     location += f'–{item.get("line_end")}'
                 column.markdown(
-                    f'<div class="evidence-card"><b>{label}</b><div class="evidence-meta">{html.escape(str(item.get("source", "Unknown source")))} · {location} · {item.get("confidence", 0):.0%}</div><div class="evidence-value">{html.escape(str(value))}</div><div class="evidence-quote">{html.escape(str(item.get("excerpt", "No excerpt available")))}</div></div>',
+                    f'<div class="evidence-card"><b>{label}</b><div class="evidence-meta">{html.escape(str(item.get("source", "Unknown source")))} · {location} · {item.get("confidence", 0):.0%}{" · read by Gemini vision" if item.get("read_method") == "gemini_vision" else ""}</div><div class="evidence-value">{html.escape(str(value))}</div><div class="evidence-quote">{html.escape(str(item.get("excerpt", "No excerpt available")))}</div></div>',
                     unsafe_allow_html=True,
                 )
 
@@ -450,43 +456,21 @@ def render_mail_demo() -> None:
                 st.rerun()
 
 
-def save_results_to_firebase(artifacts: ProcessingArtifacts) -> dict[str, Any]:
-    """Store verification results in Firebase Firestore."""
+def save_cases_to_firebase(artifacts: ProcessingArtifacts, email_ids: list[str] | None = None) -> dict[str, Any]:
+    """Store audit records in Firebase Firestore (see src/cloud_records.py for what a record holds)."""
     if db is None:
         return {"saved": 0, **firebase_status()}
-
     try:
-        saved = 0
-        for email_id, result in artifacts.submission.items():
-            detail = artifacts.internal_results.get(email_id, {})
+        from src.cloud_records import save_cases
 
-            record = {
-                "email_id": email_id,
-                "status": result.get("status", ""),
-                "category": result.get("category", ""),
-                "subject": next(
-                    (
-                        email.get("subject", "")
-                        for email in artifacts.emails
-                        if email.get("email_id") == email_id
-                    ),
-                    "",
-                ),
-                "mismatches": detail.get("mismatches", []),
-                "classification_confidence": detail.get(
-                    "classification_confidence", 0
-                ),
-            }
-
-            # Stable IDs make reruns idempotent instead of creating duplicates.
-            db.collection("verification_results").document(email_id).set(record, merge=True)
-            saved += 1
-
-        return {"saved": saved, **firebase_status()}
-
+        return {"saved": save_cases(db, artifacts, email_ids), **firebase_status()}
     except Exception as exc:
         print(f"Firebase save failed: {exc}")
         return {"saved": 0, "configured": True, "connected": False, "error": str(exc)}
+
+
+def save_results_to_firebase(artifacts: ProcessingArtifacts) -> dict[str, Any]:
+    return save_cases_to_firebase(artifacts)
 
 
 def run_dataset_with_progress(bundle_path: str) -> ProcessingArtifacts:
@@ -778,6 +762,8 @@ def render_human_review_dashboard(
                         artifacts, selected, si_values, bl_values, note
                     )
                     st.session_state.dataset_artifacts = updated
+                    if save_cases_to_firebase(updated, [selected]).get("saved"):
+                        st.toast("Saved the review decision to Firestore")
                     st.session_state.submission_ready = False
                     st.session_state.pop("export_files", None)
                     write_artifacts(updated, DEFAULT_OUTPUT)
@@ -815,6 +801,7 @@ def render_human_review_dashboard(
                         dataset_bundle, artifacts, selected_failed
                     )
                     st.session_state.dataset_artifacts = updated
+                    save_cases_to_firebase(updated, [selected_failed])
                     st.session_state.submission_ready = False
                     st.session_state.pop("export_files", None)
                     write_artifacts(updated, DEFAULT_OUTPUT)
@@ -977,6 +964,8 @@ elif page == "Check one case":
                     with st.status("Analyzing request · Rules + Gemini", expanded=True) as activity:
                         st.session_state.single_artifacts = process_single_email(email, uploaded_attachment(si_file), uploaded_attachment(bl_file), stage_callback=lambda eid, label: activity.write(label))
                         activity.update(label="Analysis complete", state="complete")
+                    if save_cases_to_firebase(st.session_state.single_artifacts).get("saved"):
+                        st.toast("Saved the audit record to Firestore")
                     st.rerun()
                 except (OSError, ValueError) as exc:
                     st.error(str(exc))
