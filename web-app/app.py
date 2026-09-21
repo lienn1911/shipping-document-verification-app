@@ -721,6 +721,8 @@ def render_human_review_dashboard(
             )
             if detail.get("internal_reason") == "ai_read_needs_confirmation":
                 st.warning(detail.get("detail") or "A scan was read by Gemini vision. Confirm the values against the original.")
+            elif detail.get("internal_reason") == "document_read_failed" and detail.get("detail"):
+                st.info(f"Why this needs review: {detail['detail']}")
             st.write(email.get("body", ""))
             st.dataframe(comparison_rows(detail), hide_index=True, width="stretch")
             st.markdown("### Confirm or correct extracted values")
@@ -949,6 +951,9 @@ def render_saved_results() -> None:
     if isinstance(review, dict):
         st.markdown("**Human review decision**")
         st.write(f"{review.get('decision', '')} · {str(review.get('reviewed_at', '')).replace('T', ' ')[:19]} UTC" + (f" · note: {review['note']}" if review.get("note") else ""))
+        reviewed_at, saved_at = str(review.get("reviewed_at", "")), str(record.get("saved_at", ""))
+        if reviewed_at and saved_at and reviewed_at < saved_at:  # ISO UTC strings sort by time
+            st.caption("This decision was made before the latest analysis of this email. The status above comes from that later run.")
         changes = review_changes_table(record)
         if changes:
             st.dataframe(changes, hide_index=True, width="stretch")

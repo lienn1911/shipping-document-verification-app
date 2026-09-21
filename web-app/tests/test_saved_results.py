@@ -148,5 +148,37 @@ class PageTests(unittest.TestCase):
         self.assertTrue(any("Could not read from Firestore (ConnectionError)" in w.value for w in at.warning))
 
 
+@unittest.skipUnless((DEMO / "inbox").is_dir(), "demo bundle not present")
+class StaleDecisionTests(unittest.TestCase):
+    def test_a_decision_older_than_the_latest_analysis_is_labelled(self):
+        from streamlit.testing.v1 import AppTest
+
+        snaps = demo_snaps()
+        for snap in snaps:
+            if snap.id == "email_904":
+                snap._data["human_review"]["reviewed_at"] = "2026-01-01T10:00:00+00:00"
+                snap._data["saved_at"] = "2026-01-02T10:00:00+00:00"
+        original = firebase_config.db
+        firebase_config.db = FakeDb(snaps)
+        self.addCleanup(setattr, firebase_config, "db", original)
+        at = AppTest.from_file(str(WEB_APP / "app.py"), default_timeout=120).run()
+        [b for b in at.sidebar.button if b.label == "Saved results"][0].click()
+        at.run()
+        at.selectbox(key="saved_open").select("email_904").run()
+        self.assertTrue(any("made before the latest analysis" in c.value for c in at.caption))
+
+    def test_a_current_decision_carries_no_such_label(self):
+        from streamlit.testing.v1 import AppTest
+
+        original = firebase_config.db
+        firebase_config.db = FakeDb(demo_snaps())
+        self.addCleanup(setattr, firebase_config, "db", original)
+        at = AppTest.from_file(str(WEB_APP / "app.py"), default_timeout=120).run()
+        [b for b in at.sidebar.button if b.label == "Saved results"][0].click()
+        at.run()
+        at.selectbox(key="saved_open").select("email_904").run()
+        self.assertFalse(any("made before the latest analysis" in c.value for c in at.caption))
+
+
 if __name__ == "__main__":
     unittest.main()
