@@ -105,6 +105,10 @@ FIREBASE_SERVICE_ACCOUNT_JSON = '''{ ...service account json... }'''
 
 The app reads secrets through the same settings as `.env`, so no code changes are needed.
 
+To build the Secrets text from your local `.env` and key file **without ever showing your keys on screen**, run
+`python web-app/scripts/make_streamlit_secrets.py --copy` (macOS: copies to the clipboard; paste, then `pbcopy < /dev/null`).
+`--write` instead writes a git-ignored `.streamlit/secrets.toml`, which lets you rehearse the hosted setup locally.
+
 ## Repository layout
 
 ```
