@@ -17,6 +17,52 @@ from .pipeline import process_inbox, summarize_results, validate_submission
 from .versions import annotate_versions, refresh_changes
 
 
+def prewarm_vision(inbox: Any, emails: list[dict[str, Any]], workers: int = 6) -> int:
+    """Read every scanned PDF with Gemini vision concurrently, so the sequential pipeline finds them cached.
+
+    Returns how many scans were sent. Failures are ignored here: they are remembered, and the pipeline reports
+    them per case (or reads a scan later from the cache).
+    """
+    try:
+        import ai_service
+
+        if not ai_service.vision_enabled():
+            return 0
+        from concurrent.futures import ThreadPoolExecutor
+        from io import BytesIO
+        import hashlib
+
+        from pypdf import PdfReader
+    except ImportError:
+        return 0
+    scans: dict[str, bytes] = {}
+    for email in emails:
+        for path in email.get("attachments", []):
+            if not str(path).lower().endswith(".pdf"):
+                continue
+            try:
+                raw = inbox.read_bytes(path)
+                reader = PdfReader(BytesIO(raw))
+                if reader.is_encrypted or len(reader.pages) > 100:
+                    continue
+                if all(not (page.extract_text() or "").strip() for page in reader.pages):
+                    scans[hashlib.sha256(raw).hexdigest()] = raw
+            except Exception:  # unreadable PDFs are reported by the pipeline itself
+                continue
+    if not scans:
+        return 0
+
+    def read(raw: bytes) -> None:
+        try:
+            ai_service.transcribe_scanned_pdf(raw)
+        except RuntimeError:
+            pass
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(read, scans.values()))
+    return len(scans)
+
+
 ProgressCallback = Callable[[int, int, str], None]
 StageCallback = Callable[[str, str], None]
 
@@ -132,6 +178,7 @@ def process_dataset(
         run_ai = batch_ai_enabled()
     except ImportError:
         run_ai = False
+    prewarm_vision(inbox, emails)
     submission, internal_results, summary = process_inbox(
         processing_inbox, stage_callback=stage_callback, run_ai=run_ai
     )

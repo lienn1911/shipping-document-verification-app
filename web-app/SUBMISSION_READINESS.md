@@ -14,8 +14,10 @@ Measured on the full 520-email participant bundle with Gemini and Firebase disab
   the synthetic demo bundle in `web-app/demo/versions-bundle`.
 - Hosting: repository root `requirements.txt`, `.streamlit/config.toml` and secrets support (`GEMINI_*`,
   `FIREBASE_SERVICE_ACCOUNT_JSON`) so the app can be deployed to Streamlit Community Cloud.
-- Still unsupported: **scanned PDFs** (3 emails, OCR or a vision model needed). They are escalated to human review with an
-  explicit reason, not guessed.
+- Scanned PDFs (3 emails): read with Gemini vision when Gemini is configured, shown with a warning and lower confidence;
+  otherwise (or if Gemini fails) escalated to human review with an explicit reason. Verified with stubbed transcriptions;
+  run `scripts/check_vision.py` with a real key to measure the live result.
+- Firestore now stores richer audit records (extracted values, mismatches, versions, human-review decisions) in batched writes.
 - Still no accuracy claim: the official scoring endpoint was unavailable and no answer key was used.
 
 The sections below are the original 2026-09-19 audit, kept for history.

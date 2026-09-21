@@ -8,7 +8,7 @@ import re
 from typing import Any, Callable
 
 from .doctype import assign_roles
-from .document_readers import read_document, document_text
+from .document_readers import read_document, read_document_ex, document_text
 
 
 FIELDS = (
@@ -35,7 +35,7 @@ LABEL_ALIASES = {
     "container_count": {
         "no. of containers",
         "no. of containers or packages",
-        "total containers",
+        "total containers", "containers",
         "container count",
     },
     "gross_weight_kg": {
@@ -303,7 +303,7 @@ def extract_rich_attachment(inbox: Any, path: str, role: str):
         raw = inbox.read_bytes(path)
         if len(raw) > 20 * 1024 * 1024:
             raise ValueError("Attachment exceeds the 20 MB reading limit")
-        rows = read_document(raw, path)
+        rows, read_meta = read_document_ex(raw, path)
     except Exception as exc:
         raise ReviewRequired("unreadable", "document_read_failed", f"{path}: {exc}") from exc
     text = "\n".join(row[0] for row in rows)
@@ -342,4 +342,12 @@ def extract_rich_attachment(inbox: Any, path: str, role: str):
     for field, source in sources.items():
         evidence[field].update(source)
         evidence[field]["confidence"] = 0.9
+        if read_meta.get("method") == "gemini_vision":
+            # A scan read by a language model is transcription, not a certain reading: lower confidence, and say so.
+            evidence[field].update(
+                confidence=0.8,
+                read_method="gemini_vision",
+                model=read_meta.get("model"),
+                location_kind="Gemini vision transcription of a scan",
+            )
     return fields, evidence
