@@ -33,7 +33,7 @@ a reason), 46 real mismatches (checked individually for formatting-only false al
 classification and 100% comparison exact-match against the organizers' scoring tool on the development dataset,
 168 passing tests, and a live, publicly reachable deployment.
 
-**Scalability plans.** See Roadmap below: a real mailbox connector and unseen-data validation in the near
+**Scalability plans.** See Scalability Plans below: a real mailbox connector and unseen-data validation in the near
 term, AI-assisted triage and explainable fuzzy matching in the medium term, and multilingual, multi-format,
 enterprise-integrated regional expansion beyond that -- all while keeping a human in the loop for uncertain
 cases.
@@ -255,35 +255,25 @@ CargoCheck is designed as a modular workflow so that individual components can b
 
 **0–6 Months — Real-World Pilot**
 
--Connect CargoCheck to a real operational mailbox
-
--Support additional document formats and languages
-
--Validate against unseen operational data
-
--Measure operational value in a real shipping workflow
+- Connect CargoCheck to a real operational mailbox
+- Support additional document formats and languages
+- Validate against unseen operational data
+- Measure operational value in a real shipping workflow
 
 **6–12 Months — Enterprise Workflow**
 
--AI-powered email triage
-
--Explainable fuzzy matching
-
--Automated reply drafts
-
--Analytics and monitoring
+- AI-powered email triage
+- Explainable fuzzy matching
+- Automated reply drafts
+- Analytics and monitoring
 
 **12–18+ Months — Regional Expansion**
 
--Expand from Malaysia to Singapore and wider ASEAN workflows
-
--Enterprise-system integration
-
--Multilingual document intelligence
-
--Human-in-the-loop learning
-
--Support broader shipping-document workflows
+- Expand from Malaysia to Singapore and wider ASEAN workflows
+- Enterprise-system integration
+- Multilingual document intelligence
+- Human-in-the-loop learning
+- Support broader shipping-document workflows
 
 The long-term direction is to evolve CargoCheck from a document-comparison prototype into continuous document intelligence for shipping operations, while retaining human oversight for uncertain cases.
 
