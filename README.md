@@ -189,15 +189,42 @@ python -m unittest discover -s web-app/tests
 No keys or network access are required for the test suite.
 
 
-## Roadmap
+## Scalability Plans
 
+CargoCheck is designed as a modular workflow so that individual components can be extended without replacing the entire system.
 
-- **0-6 months:** connect a real operational mailbox, support more formats and
-  languages, validate on unseen operational data, and measure pilot value.
-- **6-12 months:** add AI-assisted triage, explainable fuzzy matching, reply
-  drafts, analytics, and monitoring.
-- **12-18+ months:** expand across ASEAN workflows, integrate enterprise
-  systems, support multilingual document intelligence, and learn from reviewed
-  cases while retaining human oversight.
+**0–6 Months — Real-World Pilot**
+
+-Connect CargoCheck to a real operational mailbox
+
+-Support additional document formats and languages
+
+-Validate against unseen operational data
+
+-Measure operational value in a real shipping workflow
+
+**6–12 Months — Enterprise Workflow**
+
+-AI-powered email triage
+
+-Explainable fuzzy matching
+
+-Automated reply drafts
+
+-Analytics and monitoring
+
+**12–18+ Months — Regional Expansion**
+
+-Expand from Malaysia to Singapore and wider ASEAN workflows
+
+-Enterprise-system integration
+
+-Multilingual document intelligence
+
+-Human-in-the-loop learning
+
+-Support broader shipping-document workflows
+
+The long-term direction is to evolve CargoCheck from a document-comparison prototype into continuous document intelligence for shipping operations, while retaining human oversight for uncertain cases.
 
 
